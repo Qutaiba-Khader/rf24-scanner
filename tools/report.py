@@ -1079,6 +1079,131 @@ def suspects_section(names, atts, suspects):
 </section>"""
 
 
+def ble_addr_kind(mac):
+    """Classify a BLE address from its top two bits.
+
+    This is the difference between "not identified yet" and "cannot ever be
+    identified", and the report has to say which - otherwise every unnamed row
+    reads like unfinished work.
+    """
+    b = int(mac[:2], 16)
+    top = (b & 0xC0) >> 6
+    if top == 3:
+        return ("static random", "stable until the device is re-paired or reset",
+                "maybe")
+    if top == 1:
+        return ("resolvable private (RPA)",
+                "rotates about every 15 minutes; only a bonded peer holding the "
+                "IRK can resolve it", "bonded peer only")
+    if top == 0:
+        return ("NON-RESOLVABLE private (NRPA)",
+                "rotates and carries <b>no identity at all</b> - not even the "
+                "device's own bonded peer can map it back", "never")
+    return ("reserved", "", "unknown")
+
+
+def addressing_section(names):
+    """Why some transmitters can never be named, however many registries you ask.
+
+    Written because the obvious reading of a long "unidentified" list is that
+    somebody just has not looked hard enough. For most of these rows that is
+    false, and saying so is more useful than another lookup.
+    """
+    cap = names or {}
+    known = cap.get("known") or {}
+    ble = cap.get("ble") or []
+    if not ble:
+        return ""
+
+    buckets = {}
+    for b in ble:
+        kind, why, resolvable = ble_addr_kind(b["mac"])
+        buckets.setdefault((kind, why, resolvable), []).append(b)
+
+    rows = ""
+    for (kind, why, resolvable), items in sorted(
+            buckets.items(), key=lambda x: -len(x[1])):
+        named = sum(1 for i in items if i["mac"] in known)
+        tone = ("ok" if resolvable == "never" else
+                "maybe" if resolvable != "bonded peer only" else "sus")
+        rows += (f"<tr><td><b>{kind}</b><span class='mac'>{why}</span></td>"
+                 f"<td class='num'>{len(items)}</td>"
+                 f"<td class='num'>{named}</td>"
+                 f"<td><span class='who {tone}'>{resolvable}</span></td></tr>")
+
+    nrpa = sum(len(v) for k, v in buckets.items() if k[0].startswith("NON"))
+    pub = sum(len(v) for k, v in buckets.items() if k[0] == "public")
+
+    return f"""
+<section class="card">
+  <h2>Why some of these can never be named</h2>
+  <p class="caption" style="margin-top:0">A long list of &ldquo;unidentified&rdquo;
+    rows reads like unfinished work. For most of them it is not: <b>Bluetooth
+    privacy addressing makes them unidentifiable by design</b>, and no registry,
+    router table or lookup service can change that.</p>
+  <table class="tab">
+    <thead><tr><th>Address type</th><th class="num">Seen</th>
+      <th class="num">Named</th><th>Who can resolve it</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+  <p class="note"><b>{nrpa} of the {len(ble)} BLE devices here use a
+    non-resolvable private address.</b> That class is pure randomness,
+    regenerated periodically, containing no identity information whatsoever
+    &mdash; so it cannot be looked up, correlated across scans, or resolved by
+    the device&rsquo;s own paired phone. Only <b>{pub}</b> use a public address
+    with a real manufacturer OUI.</p>
+  <p class="note"><b>What would still work:</b> the advertisement <i>payload</i>.
+    A manufacturer-data block names the maker through its Bluetooth SIG company
+    ID, and service UUIDs say what kind of device it is &mdash; both survive
+    address rotation. This scanner records only the address, RSSI and name field,
+    so that information is being discarded rather than unavailable. Home
+    Assistant&rsquo;s Bluetooth proxy keeps the full payload.</p>
+</section>"""
+
+
+def sources_section(names):
+    """Where each name actually came from. A name read off the air, a name from
+    a registry, and a name inferred from a vendor block are three different
+    strengths of evidence and should not look alike."""
+    known = (names or {}).get("known") or {}
+    if not known:
+        return ""
+    import collections
+    by = collections.Counter(v.get("source", "unrecorded") for v in known.values())
+    STRENGTH = {
+        "home assistant device registry": ("ok", "the user named it in HA"),
+        "home assistant": ("ok", "read from a Home Assistant advertisement"),
+        "tp-link router client table": ("ok", "the router's own DHCP/association table"),
+        "manual": ("maybe", "typed in by hand from a device page"),
+        "inference": ("sus", "<b>deduced, not read</b> &mdash; from a vendor block or SSID"),
+    }
+    rows = ""
+    for src, n in by.most_common():
+        tone, note = STRENGTH.get(src, ("maybe", ""))
+        rows += (f"<tr><td><b>{html.escape(src)}</b>"
+                 + (f"<span class='mac'>{note}</span>" if note else "")
+                 + f"</td><td class='num'>{n}</td>"
+                 f"<td><span class='who {tone}'>"
+                 f"{'read' if tone=='ok' else 'inferred' if tone=='sus' else 'entered'}"
+                 f"</span></td></tr>")
+    inferred = by.get("inference", 0)
+    return f"""
+<section class="card">
+  <h2>Where each name came from</h2>
+  <p class="caption" style="margin-top:0">A name read off the air, a name from a
+    registry, and a name deduced from a vendor prefix are three different
+    strengths of evidence. They are separated here so a guess never reads like a
+    measurement.</p>
+  <table class="tab">
+    <thead><tr><th>Source</th><th class="num">Devices</th><th>Evidence</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+  <p class="note">{len(known)} devices named in total"""  + (
+    f", of which <b>{inferred} are inferences rather than readings</b> and should "
+    f"be treated as leads, not facts." if inferred else ".") + """</p>
+</section>"""
+
+
 def arc_diagram(atts, suspects, names=None):
     """The classic 2.4 GHz overlap picture: one half-arc per occupant.
 
@@ -1617,6 +1742,10 @@ def build(mean, meta, attributions=None, suspects=None, names=None):
 {zigbee_section(names)}
 
 {inventory_section(names)}
+
+{addressing_section(names)}
+
+{sources_section(names)}
 
 <section class="card">
   <h2>Which device is which</h2>
