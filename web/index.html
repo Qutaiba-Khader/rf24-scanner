@@ -849,6 +849,9 @@ function setStatus(text, cls){
 // COM port on the machine into just the boards that could plausibly be this.
 const RPI_VENDOR = 0x2E8A;
 
+// Oldest firmware this tool will vouch for. Anything below has known faults.
+const MIN_FW = '1.0.9';
+
 async function connect(showAll){
   if (!('serial' in navigator)){
     setStatus('Web Serial unavailable','err');
@@ -1006,7 +1009,24 @@ function handleLine(line){
       return;
     }
     log(line);
-    if (line.startsWith('#rf24scan')) { S.fw = line.split(' ')[1] || '?'; $('kvFw').textContent = S.fw; }
+    if (line.startsWith('#rf24scan')){
+      S.fw = line.split(' ')[1] || '?';
+      $('kvFw').textContent = S.fw;
+      // Check what is ACTUALLY on the board. Every .uf2 download lands under
+      // the same filename, so it is genuinely easy to keep re-flashing an old
+      // build and wonder why nothing changes - which is exactly what happened.
+      const num = v => v.split('.').reduce((a,p)=>a*1000 + (parseInt(p,10)||0), 0);
+      if (num(S.fw) < num(MIN_FW)){
+        S.fwStale = true;
+        log(`WARNING: this board is running firmware ${S.fw}, but ${MIN_FW} is `
+          + `required. Older builds have known faults that stop it working. Your `
+          + `browser saves every download as "rf24scan-pico.uf2", so the file with `
+          + `that exact name is probably your FIRST download - check for `
+          + `"rf24scan-pico (N).uf2" with the highest N, or use the versioned file.`);
+      } else {
+        log(`Firmware ${S.fw} - up to date.`);
+      }
+    }
     if (line.startsWith('#err'))      setStatus('Radio fault','err');
     if (line.startsWith('#info')){
       if (line.includes('radio=ok')) setStatus(S.paused?'Paused':'Scanning','on');
@@ -1718,6 +1738,17 @@ function renderAnswer(st, occ){
     $('ansState').textContent = 'Not connected';
     $('ansSay').textContent = 'Plug in the Pico and click Connect. Nothing is being measured yet.';
     setAct('<a class="btn" href="https://github.com/Qutaiba-Khader/rf24-scanner/blob/main/SETUP.md">How to set it up</a>');
+    return;
+  }
+  if (S.fwStale){
+    band.className = 'answer critical';
+    $('ansState').textContent = 'Old firmware on the board';
+    $('ansSay').innerHTML = `This board is running <b>${S.fw}</b>, but <b>${MIN_FW}</b> `
+      + `is required &mdash; older builds have faults that stop it working. Your browser `
+      + `saves every download under the same name, so <b>rf24scan-pico.uf2</b> is likely `
+      + `your very first one. Look for <b>rf24scan-pico (N).uf2</b> with the highest N.`;
+    setAct('<button class="btn primary" id="btnFw3">Get the current firmware</button>');
+    const b = $('btnFw3'); if (b) b.onclick = fwOpen;
     return;
   }
   if (!st.n){

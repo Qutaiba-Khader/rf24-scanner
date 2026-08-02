@@ -179,6 +179,15 @@ jobs:
         run: |
           TAG="${{ steps.v.outputs.tag }}"
           mv uf2/*.uf2 .
+          # Also publish VERSIONED copies. The unversioned names exist so the
+          # permanent releases/latest/download/<name> links keep working, but a
+          # browser saves every download under the same filename - so the second
+          # one becomes "rf24scan-pico (1).uf2" and the ORIGINAL, oldest, broken
+          # build keeps the obvious name. That cost a user an entire debugging
+          # session: every "flash" re-installed v1.0.0.
+          for f in rf24scan-pico.uf2 rf24scan-pico2.uf2 rf24scan-pico_w.uf2; do
+            [ -f "$f" ] && cp "$f" "${f%.uf2}-$TAG.uf2"
+          done
           ls -l ./*.uf2
           mkdir -p "dist/rf24scan-$TAG"
           cp firmware/main.py "dist/rf24scan-$TAG/main.py"

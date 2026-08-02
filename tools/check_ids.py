@@ -21,8 +21,13 @@ from pathlib import Path
 REF_RE = re.compile(r"""(?:\$\(|getElementById\(\s*)['"]([A-Za-z][\w-]*)['"]\s*\)""")
 ID_RE = re.compile(r"""\bid\s*=\s*['"]([^'"]+)['"]""")
 
-# Ids only ever produced at runtime (built into innerHTML), not present statically.
-DYNAMIC_OK = set()
+# Ids only ever produced at runtime (built into innerHTML), not present in the
+# static markup. Keep this list short and justified - every entry is a hole in
+# the check, and the check exists because one bad id silently killed every
+# feature initialised after it.
+DYNAMIC_OK = {
+    "btnFw3",   # built by renderAnswer()'s stale-firmware action button
+}
 
 
 def main(argv):
