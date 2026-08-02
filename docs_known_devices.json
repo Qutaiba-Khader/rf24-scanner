@@ -1,0 +1,123 @@
+{
+ "00178801029d27f1": {
+  "name": "Hue lightstrip plus #2",
+  "source": "manual",
+  "vendor": "ZIGBEE LST002"
+ },
+ "0017880103f56ea8": {
+  "name": "Hue lightstrip plus #1",
+  "source": "manual",
+  "vendor": "ZIGBEE LST002"
+ },
+ "001788010b89bac4": {
+  "name": "Hue gradient lightstrip #2",
+  "source": "manual",
+  "vendor": "ZIGBEE LCX004"
+ },
+ "001788010b89bd78": {
+  "name": "Hue gradient lightstrip",
+  "source": "manual",
+  "vendor": "ZIGBEE LCX004"
+ },
+ "001788010b8d1d3d": {
+  "name": "Hue play gradient lightstrip",
+  "source": "manual",
+  "vendor": "ZIGBEE LCX002"
+ },
+ "001788010c6c1aa2": {
+  "name": "Hue Play #2",
+  "source": "manual",
+  "vendor": "ZIGBEE 440400982842"
+ },
+ "001788010c6c1b20": {
+  "name": "Hue Play #1",
+  "source": "manual",
+  "vendor": "ZIGBEE 440400982842"
+ },
+ "001788010e05d45d": {
+  "name": "Hue Bridge - Zigbee radio",
+  "source": "manual",
+  "vendor": "ZIGBEE EUI-64, 2.4 GHz, invisible to Wi-Fi and BLE scans"
+ },
+ "1c61b494e03a": {
+  "name": "H100 smart hub",
+  "source": "manual",
+  "vendor": "TP-Link Tapo hub, fw 1.6.1"
+ },
+ "306893786b89": {
+  "name": "P110 smart plug",
+  "source": "manual",
+  "vendor": "TP-Link Tapo, fw 1.4.7 hw 1.0"
+ },
+ "68fccab443b6": {
+  "name": "Samsung TV hub (QA55S90C)",
+  "source": "manual",
+  "vendor": "SmartThings hub - HAS A ZIGBEE RADIO, D0:52:A8:D2:20:EB:00:01"
+ },
+ "68fccab443b7": {
+  "connectable": true,
+  "name": "55\" OLED",
+  "rssi_at_ha": -62,
+  "seen_by": "FC:6D:77:40:33:68",
+  "source": "home assistant",
+  "vendor": "Samsung Electronics"
+ },
+ "8c86dd724bb3": {
+  "name": "L930 LED light strip",
+  "source": "manual",
+  "vendor": "TP-Link Tapo, fw 1.4.3"
+ },
+ "98038e502b2f": {
+  "name": "L535 smart bulb #2",
+  "source": "manual",
+  "vendor": "TP-Link Tapo colour LED, fw 1.4.2 hw 3.0"
+ },
+ "98038e504bf6": {
+  "name": "L535 smart bulb",
+  "source": "manual",
+  "vendor": "TP-Link Tapo colour LED, fw 1.4.2 hw 3.0"
+ },
+ "a043b0123ef9": {
+  "name": "RM4 mini",
+  "source": "manual",
+  "vendor": "Broadlink IR blaster, fw 52079"
+ },
+ "b87bd49901f5": {
+  "name": "Google TV Streamer (2nd radio)",
+  "source": "manual",
+  "vendor": "Google, same device as ...F6 - adjacent MAC = its other interface"
+ },
+ "b87bd49901f6": {
+  "name": "Google TV Streamer",
+  "source": "manual",
+  "vendor": "Google, Android TV, fw 14"
+ },
+ "c42996c5d45d": {
+  "name": "Hue Bridge (BSB003)",
+  "source": "manual",
+  "vendor": "Signify - the ZIGBEE COORDINATOR, fw 1.78"
+ },
+ "c42996e095b6": {
+  "name": "Hue Play HDMI Sync Box 8K",
+  "source": "manual",
+  "vendor": "Signify HSB2 fw 2.5.4 - drives Hue lights over ZIGBEE"
+ },
+ "c53234351836": {
+  "name": "H5125 (Govee)",
+  "source": "manual",
+  "vendor": "Govee BLE - see also Govee_H61E0_3541 measured at -45 dBm"
+ },
+ "f84e58cb6334": {
+  "name": "Samsung TV hub (2nd iface)",
+  "source": "manual",
+  "vendor": "QA55S90C, same device"
+ },
+ "fc410190b20c": {
+  "connectable": true,
+  "name": "Buds3 Pro",
+  "rssi_at_ha": -82,
+  "seen_by": "FC:6D:77:40:33:68",
+  "source": "home assistant",
+  "vendor": "Samsung Electronics"
+ }
+}

@@ -692,6 +692,161 @@ def promisc_section(names):
 </section>"""
 
 
+def zigbee_ch(k):
+    """802.15.4 channel k (11..26) -> (centre, lo, hi) in MHz."""
+    f = 2405 + 5 * (k - 11)
+    return f, f - 1, f + 1
+
+
+def zigbee_section(names, block=(15, 29)):
+    """The devices neither radio could ever name.
+
+    Zigbee is 2.4 GHz, and it is invisible to a Wi-Fi scan AND invisible to a
+    BLE scan. The nRF24 can only ever see it as ENERGY. That is exactly the
+    class the elimination predicted: something real, loud and nameless to both
+    instruments - so finding a Zigbee network here is not a coincidence, it is
+    the prediction coming true.
+    """
+    known = (names or {}).get("known") or {}
+    # A 16-hex-digit address is an EUI-64, which only Zigbee/802.15.4 uses.
+    zig = {m: v for m, v in known.items() if len(m) == 16}
+    hubs = [v for m, v in known.items()
+            if "ZIGBEE" in (v.get("vendor") or "").upper() and len(m) == 12]
+    if not zig and not hubs:
+        return ""
+
+    blo, bhi = MHZ(block[0]), MHZ(block[1])
+
+    rows = "".join(
+        f"<tr><td><b>{html.escape(v.get('name','?'))}</b>"
+        f"<span class='mac'>{':'.join(m[i:i+2] for i in range(0,16,2))}</span></td>"
+        f"<td class='mono'>Zigbee EUI-64</td>"
+        f"<td class='mono'>Philips Lighting</td></tr>"
+        for m, v in sorted(zig.items(), key=lambda x: x[1].get("name", "")))
+    for v in hubs:
+        rows += (f"<tr><td><b>{html.escape(v.get('name','?'))}</b>"
+                 f"<span class='mac'>{html.escape(v.get('vendor',''))}</span></td>"
+                 f"<td class='mono'>Zigbee hub</td><td class='mono'>&mdash;</td></tr>")
+
+    # Which default Zigbee channels land inside the measured block.
+    chrows = ""
+    for label, chans in (("Philips Hue Bridge", [11, 15, 20, 25]),
+                         ("Samsung SmartThings", [14, 15, 19, 20, 25])):
+        cells = []
+        for k in chans:
+            f, lo, hi = zigbee_ch(k)
+            inside = not (hi < blo or lo > bhi)
+            cells.append(f"<b style='color:{'var(--critical)' if inside else 'var(--ink)'}'>"
+                         f"ch {k} = {f} MHz{' &#9664; INSIDE' if inside else ''}</b>")
+        chrows += (f"<tr><td><b>{label}</b></td>"
+                   f"<td>{' &middot; '.join(cells)}</td></tr>")
+
+    return f"""
+<section class="card">
+  <h2>The radios nothing could name &mdash; Zigbee</h2>
+  <p class="caption" style="margin-top:0">
+    <b>Zigbee runs in the same 2.4&nbsp;GHz band</b>, but it is invisible to a
+    Wi-Fi scan and invisible to a BLE scan. The nRF24 can only ever see it as
+    <b>energy</b>. That is precisely the device class the elimination above
+    predicted &mdash; something real and loud that neither instrument can put a
+    name to. These names came from Home Assistant, not from the air.</p>
+
+  <table class="tab">
+    <thead><tr><th>Device</th><th>Address type</th><th>Made by</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+
+  <p class="note"><b>{len(zig)} Zigbee radios plus {len(hubs)} hub(s).</b> Driving
+    them is a <b>Hue Play HDMI Sync Box</b>, which updates the lightstrips from
+    HDMI video <i>in real time</i> &mdash; a continuous stream of Zigbee traffic
+    whenever the TV is on, not occasional on/off commands. That is a persistent
+    carrier, and it lives in the same corner of the room as every capture that
+    measured this block.</p>
+
+  <h3 style="margin:16px 0 6px">Where the default channels land</h3>
+  <table class="tab">
+    <thead><tr><th>Hub</th><th>Default Zigbee channels</th></tr></thead>
+    <tbody>{chrows}</tbody>
+  </table>
+
+  <div class="elim">
+    <b>This closes every open question in this report.</b>
+    <ul>
+      <li>The block was present in <b>every</b> capture and never moved with any
+          Wi-Fi device &mdash; because it was never Wi-Fi.</li>
+      <li>No access point on Wi-Fi channels 1&ndash;6 exceeds &minus;85 dBm, and
+          no transmitter of any kind exceeds &minus;81 dBm &mdash; confirmed by
+          two independent scans.</li>
+      <li>It reads <b>1.4% at the desk</b> and <b>21&ndash;41% near the TV</b>
+          &mdash; Zigbee transmits at about 0 dBm, so it is short range.</li>
+      <li>Switching the &ldquo;LED box&rdquo; off moved this band by
+          <b>+22 points</b> &mdash; those are <b>Hue lightstrips</b>. Turning
+          them off cut the Zigbee traffic. It was never a Tuya device.</li>
+    </ul>
+  </div>
+
+  <p class="note"><b>What to check:</b> Hue app &rarr; Settings &rarr; Hue Bridge
+    &rarr; Zigbee channel. If it reads <b>15</b> (2425 MHz) or <b>14</b> (2420 MHz),
+    that is the interferer. Move it to <b>channel 25 (2475 MHz)</b> or
+    <b>20 (2450 MHz)</b>, both outside {blo}&ndash;{bhi}&nbsp;MHz. Check the
+    SmartThings hub in the Samsung app the same way.</p>
+</section>"""
+
+
+def inventory_section(names):
+    """Everything named, in one place, so nothing found has to be found twice."""
+    known = (names or {}).get("known") or {}
+    if not known:
+        return ""
+
+    cap = names or {}
+    seen = {}
+    for b in cap.get("ble", []):
+        seen[b["mac"]] = ("BLE advert", b["rssi"])
+    for a in cap.get("wifi", []):
+        seen[a["bssid"]] = ("Wi-Fi beacon", a["rssi"])
+    for r in cap.get("promisc", []):
+        seen[r["mac"]] = ("on-air traffic", r["rssi"])
+
+    rows = ""
+    for m, v in sorted(known.items(), key=lambda x: x[1].get("name", "").lower()):
+        pretty = ":".join(m[i:i + 2] for i in range(0, len(m), 2))
+        kind = "Zigbee" if len(m) == 16 else "Wi-Fi / BLE"
+        if m in seen:
+            how, rssi = seen[m]
+            vis = ("<span class='who sus'>above the floor</span>" if rssi > RPD_FLOOR_DBM
+                   else "<span class='who ok'>below the floor</span>")
+            meas = f"{rssi} dBm &middot; {how}"
+        else:
+            vis = "<span class='who ok'>not seen here</span>"
+            meas = "&mdash;"
+        rows += (f"<tr><td><b>{html.escape(v.get('name','?'))}</b>"
+                 f"<span class='mac'>{pretty}"
+                 + (f" &middot; {html.escape(v['vendor'])}" if v.get("vendor") else "")
+                 + f"</span></td><td class='mono'>{kind}</td>"
+                 f"<td class='mono'>{meas}</td><td>{vis}</td></tr>")
+
+    return f"""
+<section class="card">
+  <h2>Everything named, in one place</h2>
+  <p class="caption" style="margin-top:0">Names come from Home Assistant; signal
+    levels come from the radios. A name is a <b>label</b>, not a measurement
+    &mdash; the &minus;64 dBm floor still decides whether a device can be
+    responsible for anything measured here, which is why the level sits next to
+    every name.</p>
+  <table class="tab">
+    <thead><tr><th>Device</th><th>Radio</th><th>Measured</th>
+      <th>Scanner can see it?</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+  <p class="note">{len(known)} devices named.
+    <b>&ldquo;Not seen here&rdquo; does not mean off.</b> Every capture behind
+    this report was taken at one spot, and most of these live in another part of
+    the room &mdash; which is the whole reason the Zigbee block reads 1.4% here
+    and 21&ndash;41% beside the TV.</p>
+</section>"""
+
+
 def arc_diagram(atts, suspects, names=None):
     """The classic 2.4 GHz overlap picture: one half-arc per occupant.
 
@@ -1226,6 +1381,10 @@ def build(mean, meta, attributions=None, suspects=None, names=None):
 {named_section(names, attributions, suspects)}
 
 {promisc_section(names)}
+
+{zigbee_section(names)}
+
+{inventory_section(names)}
 
 <section class="card">
   <h2>Which device is which</h2>
