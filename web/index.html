@@ -471,6 +471,7 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
   <span class="pill"><span class="num" id="statFrames">0</span>&nbsp;frames</span>
   <button class="btn" id="btnFw">Get firmware</button>
   <button class="btn primary" id="btnConnect">Connect Pico</button>
+  <button class="btn" id="btnNames">Connect ESP32</button>
   <button class="btn sm hidden" id="btnConnectAll">Show every device</button>
   <!-- Hidden by default. Append ?demo=1 to the URL to bring it back for
        testing the UI with no radio attached. -->
@@ -564,6 +565,34 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
       <span class="caption" id="tgErr" style="margin:0;align-self:center"></span>
     </div>
   </div>
+</section>
+
+<!-- The second radio. The Pico measures energy and cannot name anything; this
+     one reads identity and a real RSSI in dBm, and is blind to energy. -->
+<section class="card targets">
+  <header>
+    <h2>Named neighbours</h2>
+    <span class="sub">what the ESP32 can actually put a name to</span>
+    <span class="spacer"></span>
+    <button class="btn sm" id="btnNamesScan">Scan now</button>
+  </header>
+  <p class="caption">
+    The Pico measures <b>energy</b> and can never say what something is. This board
+    reads <b>identity</b> &mdash; SSID, MAC, device name &mdash; and a real signal
+    level in dBm, but is blind to anything that does not announce itself. Energy the
+    Pico sees that no name here explains is, by elimination, a proprietary 2.4&nbsp;GHz
+    emitter.
+  </p>
+  <div style="overflow-x:auto">
+    <table class="tgtab">
+      <thead>
+        <tr><th>Name</th><th>Kind</th><th class="hideSm">Occupies</th>
+            <th class="r">Signal</th><th class="r">Can the Pico see it?</th></tr>
+      </thead>
+      <tbody id="nmBody"></tbody>
+    </table>
+  </div>
+  <p class="tgnote" id="nmNote"></p>
 </section>
 
 <!-- A real sequence, so the numbering carries information rather than decorating. -->
@@ -1836,10 +1865,18 @@ function renderArcs(occ, mean){
       if (ov / (t.hi-t.lo+1) >= 0.6 && ov / (o.hi-o.lo+1) >= 0.6){ tgt = t; break; }
     }
     const victim = !!(tgt && tgt.victim);
+    // A real SSID from the ESP32 beats both. It is the only label here that is
+    // read off the air rather than inferred from where the energy sits - but it
+    // only counts if that AP is above the Pico's -64 dBm floor, otherwise it
+    // cannot be the thing producing this energy at all.
+    const ap = (typeof namedAt === 'function') ? namedAt(o.lo, o.hi) : null;
+    const named = ap && ap.rssi > -64 ? ap : null;
     rows.push({
       lo:o.lo, hi:o.hi, level:o.level, victim,
-      name: o.label,
-      hint: tgt ? tgt.name : '',
+      name: named ? (named.ssid || '(hidden network)') : o.label,
+      hint: named ? `Wi-Fi ch ${named.ch}, ${named.rssi} dBm`
+                  : (tgt ? tgt.name : ''),
+      confirmed: !!named,
       colour: victim ? '#199e70'
             : o.kind === 'wifi' ? '#3987e5'
             : o.level >= 20 ? '#d03b3b' : '#fab219'
@@ -1900,8 +1937,10 @@ function renderArcs(occ, mean){
   const LANE_H = 26, CHAR_W = 5.6, lanes = [];
   for (const r of order.slice().sort((a,b) => a.cx - b.cx)){
     const text = `${r.name} - ${r.level.toFixed(0)}%`;
+    // "looks like" for a guess from position; a bare statement for a name the
+    // ESP32 actually read off the air. The wording has to carry that difference.
     const sub = `${MHZ(r.lo)}-${MHZ(r.hi)} MHz · ch ${r.lo}-${r.hi}`
-              + (r.hint ? ` · looks like ${r.hint}` : '');
+              + (r.hint ? (r.confirmed ? ` · ${r.hint}` : ` · looks like ${r.hint}`) : '');
     const half = Math.max(text.length, sub.length, 24) * CHAR_W / 2;
     const lx = Math.min(ARC.W-half-2, Math.max(half+2, r.cx));
     const want = [lx-half, lx+half];
@@ -2310,6 +2349,14 @@ function exportJson(){
     demo: S.demo,
     channels: { min:0, max:125, mhz:'2400 + channel' },
     settings: { passes:+$('rngPasses').value, dwell:+$('rngDwell').value, rate:$('selRate').value },
+    // Names are recorded WITH the sweeps. A capture without them is just
+    // numbers again three months later.
+    named: {
+      firmware: NAMES.fw,
+      wifi: [...NAMES.wifi.values()],
+      ble:  [...NAMES.ble.values()],
+      watchlist: TARGETS,
+    },
     captureA: S.capA ? { at:S.capA.at, frames:S.capA.frames.map(serialiseFrame) } : null,
     captureB: S.capB ? { at:S.capB.at, frames:S.capB.frames.map(serialiseFrame) } : null,
     frames: src.map(serialiseFrame),
@@ -2511,6 +2558,223 @@ $('btnTgtReset').onclick = () => {
   renderVerdict();
 };
 
+/* ==================================================== the naming radio
+   A second board, connected independently of the Pico.
+
+   The nRF24 measures ENERGY and can never say what something is - a 1-bit
+   detector at a fixed -64 dBm reports "busy", never "who". The ESP32 is blind
+   to energy but reads IDENTITY: SSID, BSSID, device name, MAC, and a real RSSI
+   in dBm.
+
+   Together they answer a question neither can alone. Every Wi-Fi channel maps
+   onto an exact nRF span, so energy the nRF24 sees that NO named access point
+   accounts for is, by elimination, a proprietary 2.4 GHz emitter - an LED
+   controller, a dongle, an RF remote. That is the class this tool hunts.
+
+   Keep one thing straight: a Wi-Fi scan sees BEACONS, not traffic. A hammering
+   AP and an idle one beacon identically. The ESP32 says WHO is there; the nRF24
+   still says HOW MUCH of the air they take. */
+
+const CP210X_VENDOR = 0x10C4;          // Silicon Labs CP2102 - the usual ESP32 bridge
+const CH340_VENDOR  = 0x1A86;          // the other common one
+const NAMES = { wifi:new Map(), ble:new Map(), fw:'', connected:false,
+                lastScanAt:0, wifiSeen:0, bleSeen:0 };
+let nport=null, nreader=null, nwriter=null, nAlive=false;
+
+const AUTH = ['open','WEP','WPA','WPA2','WPA/WPA2','enterprise','WPA3','WPA2/3'];
+
+/* Wi-Fi channel k centres at 2412+5(k-1) MHz and is 20 MHz wide, so it lands on
+   nRF channels (12+5(k-1)) +/- 10. This mapping is what lets a named AP be laid
+   directly over measured energy. */
+const wifiSpan = ch => { const c = 12 + 5*(ch-1); return [c-10, c+10]; };
+
+/* The strongest named AP whose span actually covers a measured cluster. Used
+   only to LABEL, never to claim - see the "looks like" wording in the arcs. */
+function namedAt(lo, hi){
+  let best = null;
+  for (const ap of NAMES.wifi.values()){
+    const [a,b] = wifiSpan(ap.ch);
+    const ov = Math.min(hi,b) - Math.max(lo,a) + 1;
+    if (ov <= 0) continue;
+    if (ov / (hi-lo+1) < 0.5) continue;
+    if (!best || ap.rssi > best.rssi) best = ap;
+  }
+  return best;
+}
+
+async function nConnect(showAll){
+  if (!('serial' in navigator)){ log('Web Serial unavailable.'); return; }
+  try{
+    log(showAll ? 'ESP32: opening picker (every device)…'
+                : 'ESP32: opening picker (USB-serial bridges only)…');
+    nport = await navigator.serial.requestPort(showAll ? {} : { filters:[
+      { usbVendorId: CP210X_VENDOR }, { usbVendorId: CH340_VENDOR } ]});
+    await nport.open({ baudRate:115200 });
+    nwriter = nport.writable.getWriter();
+    NAMES.connected = true;
+    $('btnNames').textContent = 'Disconnect ESP32';
+    $('btnNames').classList.add('primary');
+    nReadLoop();
+    setTimeout(()=>nSend('?'), 250);
+    log('ESP32: port open, asking it to identify itself…');
+    setTimeout(()=>{
+      if (!NAMES.fw) log('ESP32: nothing received after 8s. Is this the right port, '
+        + 'and is it running the rfnames firmware (esp32/ in the repo)?');
+    }, 8000);
+  }catch(err){
+    if (err && err.name === 'NotFoundError'){
+      log('ESP32: no device selected. If your board uses a different USB chip, '
+        + 'use "Show every device" next to the Pico button.');
+      return;
+    }
+    log('ESP32 connect failed: ' + err);
+  }
+}
+
+async function nDisconnect(){
+  try { await nSend('H'); await new Promise(r=>setTimeout(r,120)); } catch(e){}
+  nAlive = false;
+  try{ if (nreader) await nreader.cancel(); }catch(e){}
+  try{ if (nwriter){ nwriter.releaseLock(); nwriter=null; } }catch(e){}
+  try{ if (nport) await nport.close(); }catch(e){}
+  nport=null; NAMES.connected=false;
+  $('btnNames').textContent = 'Connect ESP32';
+  $('btnNames').classList.remove('primary');
+  log('ESP32: disconnected.');
+  renderNames();
+}
+
+async function nSend(cmd){
+  if (!nwriter) return;
+  try { await nwriter.write(new TextEncoder().encode(cmd + '\n')); } catch(e){}
+}
+
+async function nReadLoop(){
+  const dec = new TextDecoder();
+  let buf = '';
+  nAlive = true;
+  try{
+    nreader = nport.readable.getReader();
+    while (nAlive){
+      const { value, done } = await nreader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream:true });
+      if (buf.indexOf('\n') >= 0){
+        const parts = buf.split('\n');
+        buf = parts.pop();
+        for (const p of parts)
+          nHandleLine(p.charCodeAt(p.length-1) === 13 ? p.slice(0,-1) : p);
+      }
+      if (buf.length > 8192) buf = '';
+    }
+  }catch(err){ log('ESP32 read error: ' + err); }
+  finally{ try{ nreader.releaseLock(); }catch(e){} nreader = null; }
+}
+
+function nHandleLine(line){
+  if (!line) return;
+
+  if (line[0] === 'W' && line[1] === ' '){
+    // W <rssi> <ch> <bssid> <auth> <ssid...>   - SSID is the rest of the line
+    // because it is the only field that can contain spaces.
+    const p = line.split(' ');
+    if (p.length < 5) return;
+    const rssi = +p[1], ch = +p[2], bssid = p[3], auth = +p[4];
+    const ssid = p.slice(5).join(' ');
+    if (!Number.isFinite(rssi) || !Number.isFinite(ch)) return;
+    NAMES.wifi.set(bssid, { bssid, ch, rssi, auth, ssid, at: Date.now() });
+    return;
+  }
+  if (line[0] === 'B' && line[1] === ' '){
+    const p = line.split(' ');
+    if (p.length < 4) return;
+    const rssi = +p[1], mac = p[3];
+    const name = p.slice(4).join(' ');
+    if (!Number.isFinite(rssi)) return;
+    const prev = NAMES.ble.get(mac);
+    // Keep the strongest reading and never lose a name to a later nameless
+    // advert from the same device - most adverts carry no name at all.
+    NAMES.ble.set(mac, { mac, rssi: prev ? Math.max(prev.rssi, rssi) : rssi,
+                         name: name || (prev && prev.name) || '', at: Date.now() });
+    return;
+  }
+
+  if (line.startsWith('#rfnames')){
+    NAMES.fw = line.split(' ')[1] || '?';
+    log(`ESP32: rfnames firmware ${NAMES.fw}.`);
+    return;
+  }
+  if (line.startsWith('#scan') && line.includes('done')){
+    const p = line.split(' ');
+    if (p[1] === 'wifi') NAMES.wifiSeen = +p[3] || 0;
+    if (p[1] === 'ble')  NAMES.bleSeen  = +p[3] || 0;
+    NAMES.lastScanAt = Date.now();
+    renderNames();
+    renderVerdict();               // names feed the arc labels
+    return;
+  }
+  if (line.startsWith('#err')) log('ESP32 ' + line);
+}
+
+function renderNames(){
+  const body = $('nmBody'), note = $('nmNote');
+  if (!body) return;
+
+  const aps = [...NAMES.wifi.values()].sort((a,b) => a.ch - b.ch || b.rssi - a.rssi);
+  const ble = [...NAMES.ble.values()].sort((a,b) => b.rssi - a.rssi).slice(0, 12);
+
+  if (!aps.length && !ble.length){
+    body.innerHTML = `<tr><td colspan="5">${NAMES.connected
+      ? 'Scanning…' : 'Connect the ESP32 to put names on what the Pico is measuring.'}</td></tr>`;
+    note.textContent = '';
+    return;
+  }
+
+  let html = '';
+  for (const a of aps){
+    const [lo,hi] = wifiSpan(a.ch);
+    // Everything the nRF24 could possibly see must be above its -64 dBm floor.
+    // Marking that explicitly stops a -90 dBm neighbour being blamed for energy
+    // the scanner physically cannot be detecting.
+    const visible = a.rssi > -64;
+    html += `<tr>`
+      + `<td><span class="nm">${esc(a.ssid || '(hidden network)')}</span>`
+      +   `<span class="rl">${a.bssid.replace(/(..)(?=.)/g,'$1:')} &middot; ${AUTH[a.auth]||a.auth}</span></td>`
+      + `<td class="band">Wi-Fi ch ${a.ch}</td>`
+      + `<td class="band hideSm">${MHZ(lo)}&ndash;${MHZ(hi)} MHz</td>`
+      + `<td class="r"><span class="lvl">${a.rssi}</span> dBm</td>`
+      + `<td class="r"><span class="tgstate ${visible?'on':'off'}">`
+      +   `<i style="background:${visible?'#d03b3b':'#0ca30c'}"></i>`
+      +   `${visible ? 'loud enough to see' : 'below the Pico’s floor'}</span></td>`
+      + `</tr>`;
+  }
+  for (const b of ble){
+    const visible = b.rssi > -64;
+    html += `<tr>`
+      + `<td><span class="nm">${esc(b.name || '(unnamed BLE device)')}</span>`
+      +   `<span class="rl">${b.mac.replace(/(..)(?=.)/g,'$1:')}</span></td>`
+      + `<td class="band">BLE</td>`
+      + `<td class="band hideSm">hops 2402&ndash;2480</td>`
+      + `<td class="r"><span class="lvl">${b.rssi}</span> dBm</td>`
+      + `<td class="r"><span class="tgstate ${visible?'mid':'off'}">`
+      +   `<i style="background:${visible?'#fab219':'#0ca30c'}"></i>`
+      +   `${visible ? 'loud enough to see' : 'below the Pico’s floor'}</span></td>`
+      + `</tr>`;
+  }
+  body.innerHTML = html;
+
+  const loud = aps.filter(a => a.rssi > -64);
+  note.innerHTML = `<b>${aps.length} access points, ${NAMES.ble.size} BLE devices.</b> `
+    + (loud.length
+        ? `${loud.length} of the access points are above the Pico&rsquo;s &minus;64 dBm floor, `
+        + `so they can account for measured energy.`
+        : `<b>None of them is above the Pico&rsquo;s &minus;64 dBm floor.</b> That means `
+        + `any strong energy the Pico is measuring is <b>not</b> coming from a Wi-Fi `
+        + `access point &mdash; by elimination it is a proprietary 2.4 GHz emitter.`)
+    + ` A Wi-Fi scan sees <b>beacons, not traffic</b>: a busy access point and an idle `
+    + `one look identical here. Only the Pico measures how much air is actually used.`;
+}
+
 /* ================================================================== wiring */
 const fwOpen  = () => $('fwModal').classList.remove('hidden');
 const fwClose = () => $('fwModal').classList.add('hidden');
@@ -2525,6 +2789,8 @@ $('fwModal').querySelectorAll('.pick').forEach(a => a.addEventListener('click', 
 
 $('btnConnect').onclick    = () => S.connected ? disconnect() : connect(false);
 $('btnConnectAll').onclick = () => connect(true);
+$('btnNames').onclick      = () => NAMES.connected ? nDisconnect() : nConnect(false);
+$('btnNamesScan').onclick  = () => { nSend('W'); setTimeout(()=>nSend('B'), 400); };
 $('btnDemo').onclick    = toggleDemo;
 
 $('btnPause').onclick = () => {

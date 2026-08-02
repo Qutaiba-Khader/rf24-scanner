@@ -1,0 +1,1 @@
+warning: config BTDM_CTRL_CONTROLLER_DEBUG_MODE_1 (defined at C:/Users/qzaid/esp/esp-idf/components/bt/controller/esp32/Kconfig.in:537) has a "visible if" option, which is not supported for configs

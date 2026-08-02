@@ -1,0 +1,6 @@
+# Wi-Fi + Bluedroid BLE in one image is large; the stock single-factory table
+# leaves ~1.5 MB and the link fails late, after a long build. 3 MB is plenty.
+# Name,   Type, SubType, Offset,  Size
+nvs,      data, nvs,     0x9000,  0x6000
+phy_init, data, phy,     0xf000,  0x1000
+factory,  app,  factory, 0x10000, 0x300000
