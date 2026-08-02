@@ -31,10 +31,21 @@ Both conclusions are relative and coarse. This is not a power meter. But it
 separates "loud and intermittent" from "marginal and constant", and those two
 have completely different implications for whether a device can break a link.
 
+HOW IT CAPTURES
+---------------
+By default it uses the firmware's **cycle mode** (`B3`, v1.2.0+): the board
+rotates the bandwidth every frame and tags each one, so all three are measured a
+few hundred milliseconds apart. That matters - taking three separate one-minute
+captures assumes the room holds still for three minutes, and in this room the
+Xbox alone moves a band by +6 to +30 depending on whether it is in use. A change
+like that would masquerade as a bandwidth trend.
+
+`--sequential` falls back to three separate captures for firmware older than
+v1.2.0.
+
 RULES (same as every other capture in this project)
-- Do not move the scanner between the three runs. You would be measuring your
-  own hand.
-- 60 seconds minimum each. Shorter runs invent clusters.
+- Do not move the scanner. You would be measuring your own hand.
+- 60 seconds minimum per bandwidth. Shorter runs invent clusters.
 - Change nothing else in the room while it runs.
 """
 
@@ -173,6 +184,10 @@ def main():
     ap.add_argument("--port")
     ap.add_argument("--seconds", type=int, default=60,
                     help="per bandwidth (default 60 - do not go lower)")
+    ap.add_argument("--sequential", action="store_true",
+                    help="three separate captures instead of interleaving. "
+                         "Needed on firmware older than v1.2.0, which has no "
+                         "cycle mode. Assumes the room holds still throughout.")
     ap.add_argument("--save", metavar="FILE", help="write the result as JSON")
     ap.add_argument("--label", metavar="TEXT", default="",
                     help="what was powered on during this run")
@@ -184,26 +199,64 @@ def main():
               f"documented minimum.\n")
 
     port = find_port(args.port)
-    print("Do not move the scanner between the three runs.\n")
 
-    means, sweeps = [], []
-    for rate in (0, 1, 2):
-        print(f"--- {RATE_NAMES[rate]} ({args.seconds}s) ---")
-        frames, control = collect(port, args.seconds, bw=rate)
+    if args.sequential:
+        print("Sequential mode: three separate captures.")
+        print("Do not move the scanner, and change nothing in the room.\n")
+        means, sweeps = [], []
+        for rate in (0, 1, 2):
+            print(f"--- {RATE_NAMES[rate]} ({args.seconds}s) ---")
+            frames, control = collect(port, args.seconds, bw=rate)
+            if not frames:
+                sys.exit("No sweeps received. "
+                         + ("; ".join(control) or "board silent."))
+            got = [c for c in control if "rate=" in c]
+            if got:
+                print(f"  board confirms: {got[-1]}")
+            means.append(mean_of(frames))
+            sweeps.append(len(frames))
+            time.sleep(1.0)
+        total = args.seconds
+    else:
+        # Cycle mode. The firmware rotates the bandwidth every frame and tags
+        # each one, so all three are measured a few hundred ms apart instead of
+        # a minute apart. That matters here: the Xbox alone moves a band by +6
+        # to +30 depending on whether it is in use, which would show up as a
+        # bandwidth trend that is really just the room changing.
+        total = args.seconds * 3
+        print(f"Cycle mode: one capture of {total}s, bandwidth rotating per frame.")
+        print("Do not move the scanner.\n")
+        frames, control = collect(port, total, bw=3)
         if not frames:
             sys.exit("No sweeps received. " + ("; ".join(control) or "board silent."))
-        got = [c for c in control if c.startswith("#state") or "rate" in c]
-        if got:
-            print(f"  board confirms: {got[-1]}")
-        means.append(mean_of(frames))
-        sweeps.append(len(frames))
-        time.sleep(1.0)
+        if not any("rate=cycle" in c for c in control):
+            sys.exit(
+                "The board did not accept B3 (cycle).\n"
+                "That command needs firmware v1.2.0 or newer - check the banner\n"
+                "above. Either flash v1.2.0, or re-run with --sequential to do\n"
+                "three separate captures on the firmware you have.")
+        buckets = [[], [], []]
+        untagged = 0
+        for f in frames:
+            if f.get("rate") is None:
+                untagged += 1
+            else:
+                buckets[f["rate"]].append(f)
+        if untagged:
+            sys.exit(f"{untagged} frames carried no bandwidth tag - the firmware "
+                     f"is older than v1.2.0.\nRe-run with --sequential.")
+        if min(len(b) for b in buckets) < 5:
+            sys.exit("Too few frames per bandwidth (%s). Run longer."
+                     % ", ".join(str(len(b)) for b in buckets))
+        means = [mean_of(b) for b in buckets]
+        sweeps = [len(b) for b in buckets]
 
-    rows = analyse(means, args.seconds, sweeps)
+    rows = analyse(means, total if args.sequential else args.seconds, sweeps)
 
     if args.save:
         json.dump({"label": args.label, "seconds": args.seconds,
                    "sweeps": sweeps, "rates": list(RATE_NAMES),
+                   "mode": "sequential" if args.sequential else "cycle",
                    "means": means, "clusters": rows},
                   open(args.save, "w"), indent=1)
         print(f"\nSaved: {args.save}")

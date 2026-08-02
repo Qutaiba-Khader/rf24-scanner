@@ -145,7 +145,17 @@ def parse_frame(line):
             pct[lo + i] = int(hexs[i * 2:i * 2 + 2], 16) / passes * 100
     except ValueError:
         return None
-    return {"ms": int(p[4]), "passes": passes, "pct": pct}
+    # Firmware >= 1.2.0 appends the bandwidth this frame was measured at, so a
+    # single B3 (cycle) capture carries all three interleaved. Older firmware
+    # omits the field entirely - hence None rather than a default, so a caller
+    # can tell "not reported" from "measured at 250 kbps".
+    rate = None
+    if len(p) >= 9:
+        try:
+            rate = int(p[8])
+        except ValueError:
+            rate = None
+    return {"ms": int(p[4]), "passes": passes, "pct": pct, "rate": rate}
 
 
 def mean_of(frames):

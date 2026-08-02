@@ -161,6 +161,38 @@ emitter off and on for you, standing in for you unplugging the real box.
 | **Passes per frame** | Samples per channel per frame. More = steadier probability, slower waterfall. 8 is a good default. |
 | **Dwell** | RX time per sample. **Do not go below ~130 µs** — the PLL has not relocked and readings become noise. |
 | **RX bandwidth** | 250 kbps is narrowest and sharpest; 2 Mbps catches more energy but smears neighbouring channels. 1 Mbps matches the 1 MHz channel grid. |
+
+### Cycle mode — new in v1.2.0
+
+The bandwidth setting is not just a tuning knob, it is a **measurement**. The
+rate sets the receiver's IF bandwidth, so a **wideband** source (a 20 MHz Wi-Fi
+carrier) delivers more power into a wider receiver, while a **narrowband** one
+delivers the same power at every setting.
+
+Firmware v1.2.0 adds `B3` — **cycle** — which rotates 250 kbps → 1 Mbps → 2 Mbps
+one per frame and tags each frame with the rate it was measured at. That makes
+the three readings a few hundred milliseconds apart instead of a minute apart,
+which matters: three separate captures assume the room holds still for three
+minutes, and a device switching on mid-run would masquerade as a bandwidth trend.
+
+```powershell
+python tools\bwtest.py --port COM19 --seconds 60
+```
+
+Read it as:
+
+| Reading | Means |
+|---|---|
+| Occupancy **climbs** with bandwidth | Wideband, and/or sitting near the −64 dBm threshold |
+| Occupancy stays **flat** | Narrowband, and comfortably above threshold — so the percentage is a genuine duty cycle, not an artefact |
+
+That second row is the useful one: it is the closest this instrument gets to
+answering *how strong*, which a 1-bit detector otherwise never can.
+
+On firmware older than v1.2.0, use `--sequential` for three separate captures.
+
+**The frame format gained a trailing `<rate>` field in v1.2.0.** It is appended,
+not inserted, so older tools keep working unchanged.
 | **Pause** | Halts the sweep, keeps the connection. |
 | **Re-test radio** | Re-runs the SPI self-test. Use after re-seating a wire. |
 

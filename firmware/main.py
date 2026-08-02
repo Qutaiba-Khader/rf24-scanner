@@ -47,9 +47,12 @@ SERIAL PROTOCOL  (USB CDC, line oriented, 8N1, baud irrelevant)
     #info k=v k=v ...                    current settings
     #err <message>                       fault (e.g. radio not found)
     #hb <ms>                             heartbeat, once/sec while paused
-    S <seq> <passes> <dwell> <ms> <lo> <hi> <hex>
+    S <seq> <passes> <dwell> <ms> <lo> <hi> <hex> <rate>
         one frame. <hex> is two lowercase hex digits per channel from
         <lo> to <hi> inclusive; each value is 0..<passes> hits.
+        <rate> is 0/1/2 - the bandwidth this frame was measured at. Added
+        in v1.2.0 as a TRAILING field, so pre-1.2.0 hosts (which read
+        fields 0..6 positionally) keep working unchanged.
 
   host -> Pico  (one command per line, LF or CRLF)
     ?            print banner + #info
@@ -59,6 +62,8 @@ SERIAL PROTOCOL  (USB CDC, line oriented, 8N1, baud irrelevant)
     P<n>         passes accumulated per frame, 1..64 (default 8)
     C<lo>,<hi>   channel range, 0..125             (default 0,125)
     B<n>         RX bandwidth 0=250kbps 1=1Mbps 2=2Mbps (default 1)
+                 3=cycle - rotate all three, one per frame, so the same
+                 scene is measured at every bandwidth near-simultaneously
     T            re-run the radio self-test
     Z            reset sequence counter
 
@@ -83,7 +88,7 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 
 # How long to leave the CPU alone at boot before starting to scan.
 #
@@ -331,7 +336,14 @@ def sweep_pass(counts, lo, hi, dwell):
             counts[ch - lo] += 1
 
 
-def emit_frame(seq, n, passes, dwell, lo, hi, ms):
+def emit_frame(seq, n, passes, dwell, lo, hi, ms, rate):
+    """Emit one sweep.
+
+    The rate index is appended as a NEW TRAILING field. Every existing parser
+    reads fields 0..7 positionally and only checks `len(parts) < 8`, so older
+    hosts keep working untouched - which matters, because a firmware/host
+    version mismatch has already cost this project nine pointless reflashes.
+    """
     hb = _hexbuf
     c = _counts
     j = 0
@@ -341,8 +353,8 @@ def emit_frame(seq, n, passes, dwell, lo, hi, ms):
         hb[j + 1] = _HEXD[v & 0xF]
         j += 2
     return say(
-        "S %d %d %d %d %d %d %s\n"
-        % (seq, passes, dwell, ms, lo, hi, bytes(hb[: n * 2]).decode())
+        "S %d %d %d %d %d %d %s %d\n"
+        % (seq, passes, dwell, ms, lo, hi, bytes(hb[: n * 2]).decode(), rate)
     )
 
 
@@ -353,6 +365,17 @@ class Scanner:
         self.lo = CH_MIN
         self.hi = CH_MAX
         self.rate = 1
+        # Cycle mode (B3): rotate 250k -> 1M -> 2M on successive frames.
+        #
+        # The rate sets the receiver's IF bandwidth, so comparing the same
+        # scene at all three separates a WIDEBAND source (collects more power
+        # in a wider receiver) from a NARROWBAND one (identical everywhere),
+        # and a signal well above the -64 dBm threshold (flat) from one sitting
+        # right on it (climbs). Doing that as three separate captures assumes
+        # the room holds still for minutes - and in this room the Xbox alone
+        # swings a band by +6 to +30 depending on whether it is in use.
+        # Interleaving per frame makes the comparison genuinely simultaneous.
+        self.cycle = False
         self.running = True
         self.seq = 0
         self.radio_ok = False
@@ -370,7 +393,7 @@ class Scanner:
                 self.passes,
                 self.lo,
                 self.hi,
-                RATE_NAMES[self.rate],
+                "cycle" if self.cycle else RATE_NAMES[self.rate],
                 "run" if self.running else "halt",
             )
         )
@@ -425,9 +448,14 @@ class Scanner:
                 self.info()
             elif k == "B":
                 v = int(arg)
-                if not (0 <= v <= 2):
+                if not (0 <= v <= 3):
                     raise ValueError("bad rate")
-                self.rate = v
+                if v == 3:
+                    self.cycle = True
+                    self.rate = 0
+                else:
+                    self.cycle = False
+                    self.rate = v
                 radio_init(self.rate)
                 self.info()
             elif k == "T":
@@ -542,6 +570,14 @@ def main():
             continue
 
         # --- one frame = `passes` accumulated sweeps -------------------------
+        # In cycle mode the rate advances BEFORE the frame, so the rate index
+        # emitted with the frame is the one the frame was actually measured at.
+        # radio_init costs ~12 ms of sleep_ms against a ~400 ms frame (~3%), and
+        # sleep_ms yields, so it stays USB-friendly.
+        if sc.cycle:
+            sc.rate = (sc.rate + 1) % 3
+            radio_init(sc.rate)
+
         lo, hi = sc.lo, sc.hi
         n = hi - lo + 1
         for i in range(n):
@@ -557,7 +593,7 @@ def main():
         ms = time.ticks_diff(time.ticks_ms(), t0)
 
         sc.seq += 1
-        if emit_frame(sc.seq, n, sc.passes, sc.dwell, lo, hi, ms):
+        if emit_frame(sc.seq, n, sc.passes, sc.dwell, lo, hi, ms, sc.rate):
             if dropped:
                 # Tell the host it missed data, now that it is listening again.
                 say("#info dropped=%d host_was_not_reading\n" % dropped)
