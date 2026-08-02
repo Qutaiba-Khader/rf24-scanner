@@ -1029,14 +1029,36 @@ def rank_suspects(names, atts, suspects):
         # scored as though it could.
         if r.get("advertiser") and not r.get("live"):
             r["score"] *= 0.45
+            r["explains"] = "bt"
             r["why"].append("only an advertising burst on 3 channels &mdash; far too "
                             "low a duty cycle to hold a band busy")
+
+    # A single "likely to be the cause" score conflates two different problems,
+    # and a row can be a strong candidate for one while being physically
+    # incapable of the other. Say which, per row, or the table contradicts its
+    # own analysis - an advertiser was ranked #1 for a persistent band it cannot
+    # produce.
+    for r in rows.values():
+        if r.get("explains"):
+            continue
+        if r.get("live"):
+            r["explains"] = "bt"          # a hopping link, spread across all 79
+        elif r.get("advertiser"):
+            r["explains"] = "bt"
+        else:
+            r["explains"] = "both"        # continuous Wi-Fi/Zigbee: can do either
 
     victims, cands = [], []
     for r in rows.values():
         lab = (r.get("label") or "").lower()
         (victims if any(w in lab for w in VICTIM_WORDS) else cands).append(r)
     return sorted(cands, key=lambda x: -x["score"]), victims
+
+
+EXPLAINS = {
+    "both": "<span class='who sus'>the band<br>or Bluetooth</span>",
+    "bt":   "<span class='who maybe'>Bluetooth<br>congestion only</span>",
+}
 
 
 def suspects_section(names, atts, suspects):
@@ -1073,6 +1095,7 @@ def suspects_section(names, atts, suspects):
             f"<td class='mono num'>{r['rssi'] if r['rssi'] is not None else '&mdash;'}"
             f"{' dBm' if r['rssi'] is not None else ''}</td>"
             f"<td class='num'><b>{r['score']:.0f}</b></td>"
+            f"<td>{EXPLAINS[r.get('explains','both')]}</td>"
             f"<td class='wy'>{'; '.join(r['why'])}</td></tr>")
 
     return f"""
@@ -1081,12 +1104,20 @@ def suspects_section(names, atts, suspects):
   <p class="caption" style="margin-top:0">
     Everything either radio has ever seen, named or not, scored on stated
     reasons rather than a hunch &mdash; so you can disagree with any row and see
-    exactly why it sits where it does. <b>Unidentified devices score higher, not
-    lower</b>: a radio nobody has named is a worse suspect than one that has been
-    tested and cleared.</p>
+    exactly why it sits where it does.</p>
+  <p class="caption"><b>There are two different problems here, and one score
+    cannot rank both.</b> The <b>persistent 2415&ndash;2429&nbsp;MHz block</b>
+    needs a <i>continuous</i> emitter. <b>Bluetooth congestion</b> &mdash; the
+    thing that actually fits &ldquo;only gaming mode and Auracast fail&rdquo;
+    &mdash; is caused by anything sharing the 79 hop channels, including short
+    bursts. The <b>Could explain</b> column says which of the two each row is
+    physically capable of. A BLE advertiser transmits for a moment on three
+    channels and is silent between: it can add to Bluetooth congestion, and it
+    <b>cannot</b> hold a band at 21&ndash;41% busy.</p>
   <table class="tab rank">
     <thead><tr><th class="num">#</th><th>Device</th><th>Occupies</th>
-      <th class="num">Signal</th><th class="num">Score</th><th>Why</th></tr></thead>
+      <th class="num">Signal</th><th class="num">Score</th>
+      <th>Could explain</th><th>Why</th></tr></thead>
     <tbody>{body}</tbody>
   </table>
   <p class="note"><b>How the score is built.</b> Loud enough to be detected here
