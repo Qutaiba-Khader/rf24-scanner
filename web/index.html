@@ -319,6 +319,31 @@ details.fold .inner{padding:0 14px 14px}
 
 .caption{font-size:12px;line-height:1.5;opacity:.96;margin:0 0 9px}
 
+/* ------------------------------------------------------------ board picker */
+.modal{
+  position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.74);
+  display:grid;place-items:center;padding:20px;
+}
+.modal .sheet{
+  background:var(--surface);border:1px solid var(--border-strong);
+  border-radius:14px;max-width:470px;width:100%;padding:20px 22px 22px;
+  box-shadow:0 24px 60px rgba(0,0,0,.6);max-height:90vh;overflow:auto;
+}
+.modal h2{font-size:15px;text-transform:none;letter-spacing:0}
+.modal .lede{font-size:13px;line-height:1.5;margin:8px 0 4px}
+.pick{
+  display:block;padding:12px 14px;margin-top:9px;text-decoration:none;
+  border:1px solid var(--border-strong);border-radius:9px;color:var(--ink);
+  transition:.14s;
+}
+.pick:hover{background:#232322;border-color:var(--series-1)}
+.pick b{display:block;font-size:14px}
+.pick span{display:block;font-size:12px;opacity:.95;margin-top:1px}
+.modal details{margin-top:14px;font-size:12.5px;line-height:1.55}
+.modal details summary{cursor:pointer;user-select:none;font-weight:600}
+.modal details p{margin:8px 0 0}
+.modal .close{margin-top:16px;width:100%}
+
 .hidden{display:none !important}
 
 /* -------------------------------------------------------------------- foot */
@@ -359,7 +384,7 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
   <span class="pill" id="statusPill"><span class="led"></span><span id="statusTxt">Disconnected</span></span>
   <span class="pill"><span class="num" id="statFps">0.0</span>&nbsp;frames/s</span>
   <span class="pill"><span class="num" id="statFrames">0</span>&nbsp;frames</span>
-  <a class="btn" id="btnFw" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/rf24scan-pico.uf2">Firmware .uf2</a>
+  <button class="btn" id="btnFw">Get firmware</button>
   <button class="btn primary" id="btnConnect">Connect Pico</button>
   <!-- Hidden by default. Append ?demo=1 to the URL to bring it back for
        testing the UI with no radio attached. -->
@@ -616,15 +641,54 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
   <pre id="logBox" class="mono"></pre>
 </details>
 
+<!-- Board picker. Flashing the wrong board's .uf2 is the classic Pico trap: the
+     file is accepted, nothing complains, and the board simply never comes back.
+     So ask which board it is rather than guessing on the user's behalf. -->
+<div class="modal hidden" id="fwModal">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="fwTitle">
+    <h2 id="fwTitle">Which board do you have?</h2>
+    <p class="lede">Each file already contains MicroPython and the scanner
+      together. Hold <b>BOOTSEL</b>, plug the board in, and drag the file onto
+      the <b>RPI-RP2</b> drive that appears.</p>
+
+    <a class="pick" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/rf24scan-pico.uf2">
+      <b>Raspberry Pi Pico</b>
+      <span>RP2040 &middot; the original board, no radio of its own</span>
+    </a>
+    <a class="pick" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/rf24scan-pico2.uf2">
+      <b>Raspberry Pi Pico 2</b>
+      <span>RP2350 &middot; the newer board</span>
+    </a>
+    <a class="pick" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/rf24scan-pico_w.uf2">
+      <b>Pico W or Pico 2 W</b>
+      <span>has its own Wi-Fi chip &mdash; it will show up in your own scan</span>
+    </a>
+    <a class="pick" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/main.py">
+      <b>Just the code (main.py)</b>
+      <span>if you already run MicroPython, or want to edit it</span>
+    </a>
+
+    <details>
+      <summary>Not sure which one you have?</summary>
+      <p>Hold BOOTSEL, plug the board in, and open the <b>RPI-RP2</b> drive that
+        appears. Open <b>INFO_UF2.TXT</b> and read the <b>Board-ID</b> line:</p>
+      <p><b>RPI-RP2</b> &rarr; Pico &nbsp;&middot;&nbsp; <b>RP2350</b> &rarr; Pico 2.
+        If the board has a metal Wi-Fi module soldered on one end, it is a W model.</p>
+      <p>Flashing the wrong one does no damage &mdash; the board just will not start.
+        Hold BOOTSEL again and drag the right file over it.</p>
+    </details>
+
+    <button class="btn close" id="fwClose">Close</button>
+  </div>
+</div>
+
 <!-- Absolute GitHub URLs, not relative paths: this page is opened both from
      disk (web/index.html, docs one level up) and from Pages (docs alongside),
      so a relative link would be broken in one of the two. -->
 <footer class="foot">
   <a class="btn" href="https://github.com/Qutaiba-Khader/rf24-scanner">GitHub repo</a>
-  <a class="btn" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/rf24scan-pico.uf2">Firmware .uf2 (Pico)</a>
-  <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/rf24scan-pico2.uf2">Pico 2</a>
-  <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/rf24scan-pico_w.uf2">Pico W</a>
-  <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/main.py">main.py</a>
+  <button class="btn" id="btnFw2">Get firmware</button>
+  <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases">All releases</a>
   <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/blob/main/SETUP.md">Setup guide</a>
   <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/blob/main/INTERPRETING.md">Reading results</a>
   <div class="meta">
@@ -1932,6 +1996,17 @@ function toggleDemo(){
 }
 
 /* ================================================================== wiring */
+const fwOpen  = () => $('fwModal').classList.remove('hidden');
+const fwClose = () => $('fwModal').classList.add('hidden');
+$('btnFw').onclick    = fwOpen;
+$('btnFw2').onclick   = fwOpen;
+$('fwClose').onclick  = fwClose;
+$('fwModal').addEventListener('click', e => { if (e.target === $('fwModal')) fwClose(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') fwClose(); });
+// Picking a board closes the sheet, so it does not sit there over the page
+// after the download has already started.
+$('fwModal').querySelectorAll('.pick').forEach(a => a.addEventListener('click', () => setTimeout(fwClose, 400)));
+
 $('btnConnect').onclick = () => S.connected ? disconnect() : connect();
 $('btnDemo').onclick    = toggleDemo;
 
