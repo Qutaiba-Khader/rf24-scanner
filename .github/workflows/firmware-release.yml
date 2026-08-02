@@ -1,0 +1,128 @@
+name: Firmware release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and release (e.g. v1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Package and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Resolve tag
+        id: v
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}"  >> "$GITHUB_OUTPUT"
+
+      # A firmware file whose VERSION disagrees with its release tag is how you
+      # end up debugging the wrong build for an hour. Fail loudly instead.
+      - name: VERSION must match the tag
+        run: |
+          python - <<'PY'
+          import os, re, pathlib, sys
+          want = os.environ['WANT']
+          src  = pathlib.Path('firmware/main.py').read_text(encoding='utf-8')
+          m = re.search(r'^VERSION\s*=\s*"([^"]+)"', src, re.M)
+          if not m:
+              sys.exit('::error::firmware/main.py has no top-level VERSION')
+          got = m.group(1)
+          if got != want:
+              sys.exit(f'::error::tag says {want} but firmware/main.py says VERSION="{got}" - bump one of them')
+          print(f'VERSION {got} matches tag')
+          PY
+        env:
+          WANT: ${{ steps.v.outputs.version }}
+
+      - name: Static checks
+        run: |
+          python -c "import ast,pathlib; ast.parse(pathlib.Path('firmware/main.py').read_text(encoding='utf-8')); print('firmware parses')"
+          python tools/check_ids.py web/index.html
+          python tools/check_selfcontained.py web/index.html
+
+      - name: Package
+        id: pkg
+        run: |
+          TAG="${{ steps.v.outputs.tag }}"
+          mkdir -p "dist/rf24scan-$TAG"
+          cp firmware/main.py "dist/rf24scan-$TAG/main.py"
+          cp SETUP.md INTERPRETING.md README.md "dist/rf24scan-$TAG/"
+          cp web/index.html "dist/rf24scan-$TAG/rf24scan-web-tool.html"
+          (cd dist && zip -qr "../rf24scan-$TAG.zip" "rf24scan-$TAG")
+          echo "sha=$(sha256sum "rf24scan-$TAG.zip" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "fwsha=$(sha256sum firmware/main.py | cut -d' ' -f1)"  >> "$GITHUB_OUTPUT"
+          ls -l "rf24scan-$TAG.zip"
+
+      - name: Release notes
+        run: |
+          TAG="${{ steps.v.outputs.tag }}"
+          cat > notes.md <<EOF
+          ## rf24scan $TAG
+
+          2.4 GHz spectrum scanner for Raspberry Pi Pico (RP2040) + nRF24L01+PA+LNA.
+          **Receive only** — this firmware never transmits.
+
+          ### Install
+          1. Flash MicroPython (\`RPI_PICO\` build) — <https://micropython.org/download/RPI_PICO/>
+          2. Copy \`main.py\` to the Pico as \`main.py\` (Thonny, or \`mpremote cp main.py :main.py\`)
+          3. Close Thonny, then open the web tool and click **Connect Pico**
+
+          Web tool (no install, runs in the browser):
+          <https://qutaiba-khader.github.io/rf24-scanner/>
+
+          Full instructions: [SETUP.md](SETUP.md) · Reading results: [INTERPRETING.md](INTERPRETING.md)
+
+          ### Assets
+          | file | what |
+          |---|---|
+          | \`main.py\` | the firmware, copy straight to the Pico |
+          | \`rf24scan-$TAG.zip\` | firmware + web tool + both docs |
+
+          \`\`\`
+          main.py   sha256 ${{ steps.pkg.outputs.fwsha }}
+          zip       sha256 ${{ steps.pkg.outputs.sha }}
+          \`\`\`
+          EOF
+          cat notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.v.outputs.tag }}"
+          gh release create "$TAG" \
+            --title "rf24scan $TAG" \
+            --notes-file notes.md \
+            firmware/main.py "rf24scan-$TAG.zip"
+
+      - name: Verify the release is downloadable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.v.outputs.tag }}"
+          gh release view "$TAG" --json assets \
+            --jq '.assets[] | "\(.name)  \(.size) bytes  \(.url)"'
+          # A release that exists but 404s on download has happened before.
+          for a in "main.py" "rf24scan-$TAG.zip"; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -L \
+              "https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/$a")
+            echo "$a -> HTTP $code"
+            [ "$code" = "200" ] || { echo "::error::$a is not downloadable"; exit 1; }
+          done

@@ -1,0 +1,81 @@
+name: Deploy web tool to Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '*.md'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; queue instead of cancelling a live publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Publishing a page that reaches a CDN would break the offline promise,
+      # so re-check it here rather than trusting that CI already ran.
+      - name: Re-check self-contained before publishing
+        run: |
+          python tools/check_selfcontained.py web/index.html
+          python tools/check_ids.py web/index.html
+
+      - name: Stage site
+        run: |
+          mkdir -p _site
+          cp web/index.html _site/index.html
+          cp README.md SETUP.md INTERPRETING.md _site/
+          # Build stamp: GitHub Pages caches index.html, so the browser is not a
+          # reliable way to tell what is live. curl this file instead.
+          {
+            echo "commit:  ${GITHUB_SHA}"
+            echo "ref:     ${GITHUB_REF_NAME}"
+            echo "built:   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "run:     ${GITHUB_RUN_NUMBER}"
+            echo "sha256:  $(sha256sum web/index.html | cut -d' ' -f1)"
+          } > _site/build.txt
+          cat _site/build.txt
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Verify what is actually served
+        run: |
+          URL="${{ steps.deployment.outputs.page_url }}"
+          echo "Deployed to $URL"
+          # Pages can lag a few seconds behind the API reporting success.
+          for i in 1 2 3 4 5 6; do
+            sleep 10
+            LIVE=$(curl -fsSL "${URL}build.txt" 2>/dev/null || true)
+            if echo "$LIVE" | grep -q "${GITHUB_SHA}"; then
+              echo "Confirmed live:"; echo "$LIVE"; exit 0
+            fi
+            echo "attempt $i: not live yet"
+          done
+          echo "::warning::Could not confirm the new build within 60s - CDN cache lag. Re-check: curl ${URL}build.txt"

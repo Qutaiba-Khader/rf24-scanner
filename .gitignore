@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+dist/
+_site/
+*.zip
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Captured sessions and exports - keep measurements out of the repo
+rf24scan-*.json
+rf24scan-*.csv
+rf24scan-*.png

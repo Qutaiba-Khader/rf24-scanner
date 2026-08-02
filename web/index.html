@@ -1,0 +1,1599 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>rf24scan - 2.4 GHz Spectrum Scanner</title>
+<style>
+/* ===========================================================================
+   Palette. Dark is the selected mode (this is a spectrum-analyser surface).
+   Sequential ramp = ONE hue, light->dark, anchor flipped for dark: near-zero
+   recedes into the surface, high energy comes forward as light blue.
+   All text is pure white by house rule - hierarchy comes from size and
+   weight, never from greying text down.
+   ========================================================================= */
+:root{
+  --plane:#0d0d0d;
+  --surface:#1a1a19;
+  --surface-2:#141413;
+  --ink:#ffffff;
+  --grid:#2c2c2a;
+  --axis:#383835;
+  --border:rgba(255,255,255,.10);
+  --border-strong:rgba(255,255,255,.18);
+
+  --series-1:#3987e5;   /* occupancy bars       */
+  --series-2:#d95926;   /* rolling average line */
+  --series-3:#199e70;   /* peak hold            */
+
+  --band-wifi:#3987e5;
+  --band-bt:#d95926;
+  --band-ble:#199e70;
+  --band-zig:#c98500;
+  --band-oob:#d55181;
+
+  --good:#0ca30c;
+  --warning:#fab219;
+  --serious:#ec835a;
+  --critical:#d03b3b;
+
+  --diverge-neg:#3987e5;
+  --diverge-mid:#383835;
+  --diverge-pos:#e66767;
+
+  --r:10px;
+  --font:system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--plane);
+  color:var(--ink);
+  font-family:var(--font);
+  font-size:14px;
+  line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3{margin:0;font-weight:600;color:var(--ink)}
+h1{font-size:16px;letter-spacing:.2px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.9px;opacity:.95}
+h3{font-size:13px}
+button,select,input{font-family:inherit;font-size:13px;color:var(--ink)}
+code,.mono{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace}
+.num{font-variant-numeric:tabular-nums}
+
+/* ------------------------------------------------------------------ shell */
+.app{display:flex;flex-direction:column;min-height:100vh}
+
+header.bar{
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:10px 16px;background:var(--surface);
+  border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20;
+}
+.brand{display:flex;align-items:center;gap:9px;margin-right:auto}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--series-1);flex:none}
+.brand small{display:block;font-size:11px;opacity:.85;font-weight:400;letter-spacing:.2px}
+
+.pill{
+  display:inline-flex;align-items:center;gap:7px;padding:5px 11px;
+  border:1px solid var(--border);border-radius:999px;background:var(--surface-2);
+  font-size:12px;white-space:nowrap;
+}
+.pill .led{width:8px;height:8px;border-radius:50%;background:var(--axis);flex:none}
+.pill.on   .led{background:var(--good);box-shadow:0 0 0 3px rgba(12,163,12,.22)}
+.pill.warn .led{background:var(--warning)}
+.pill.err  .led{background:var(--critical)}
+.pill.demo .led{background:var(--band-zig)}
+
+.btn{
+  padding:7px 14px;border-radius:8px;border:1px solid var(--border-strong);
+  background:var(--surface-2);cursor:pointer;transition:.13s;white-space:nowrap;
+}
+.btn:hover:not(:disabled){background:#232322;border-color:rgba(255,255,255,.32)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.primary{background:var(--series-1);border-color:var(--series-1)}
+.btn.primary:hover:not(:disabled){background:#4b93e9;border-color:#4b93e9}
+.btn.danger{border-color:rgba(208,59,59,.55)}
+.btn.danger:hover:not(:disabled){background:rgba(208,59,59,.16)}
+.btn.sm{padding:5px 10px;font-size:12px}
+
+/* ------------------------------------------------------------------ layout */
+main{
+  display:grid;grid-template-columns:minmax(0,1fr) 348px;
+  gap:14px;padding:14px;align-items:start;flex:1;
+}
+@media (max-width:1180px){ main{grid-template-columns:minmax(0,1fr)} }
+
+.col{display:flex;flex-direction:column;gap:14px;min-width:0}
+
+.card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r);padding:13px 14px 14px;min-width:0;
+}
+.card > header{
+  display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:3px;
+}
+.card > header .sub{font-size:12px;opacity:.9;font-weight:400}
+.card > header .spacer{margin-left:auto}
+
+/* ------------------------------------------------------------- chart parts */
+.plot{position:relative;width:100%}
+.plot canvas{display:block;width:100%}
+#wf{image-rendering:pixelated;border-radius:6px 6px 0 0;background:var(--surface-2)}
+
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;margin-top:9px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:11px;height:3px;border-radius:2px;flex:none}
+.legend i.sq{width:10px;height:10px;border-radius:2px}
+
+.colorbar{display:flex;align-items:center;gap:9px;font-size:11px;margin-top:9px}
+.colorbar .strip{
+  flex:1;height:9px;border-radius:5px;border:1px solid var(--border);min-width:80px;
+}
+
+/* tooltip */
+.tip{
+  position:absolute;pointer-events:none;z-index:9;
+  background:#000;border:1px solid var(--border-strong);border-radius:7px;
+  padding:7px 10px;font-size:12px;opacity:0;transition:opacity .09s;
+  box-shadow:0 6px 20px rgba(0,0,0,.6);max-width:260px;white-space:normal;
+}
+.tip.show{opacity:1}
+.tip b{display:block;margin-bottom:2px}
+.tip .row{display:flex;gap:8px;justify-content:space-between}
+
+/* ------------------------------------------------------------------ inputs */
+.ctl{display:flex;flex-direction:column;gap:5px;margin-top:11px}
+.ctl label{font-size:12px;display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.ctl label b{font-weight:600}
+.ctl input[type=range]{width:100%;accent-color:var(--series-1);margin:0}
+.ctl .hint{font-size:11px;opacity:.85;line-height:1.35}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row > *{flex:1 1 auto}
+select{
+  background:var(--surface-2);border:1px solid var(--border-strong);
+  border-radius:7px;padding:6px 8px;width:100%;
+}
+
+/* ---------------------------------------------------------------- findings */
+.finding{
+  display:flex;gap:9px;padding:9px 0;border-top:1px solid var(--border);
+}
+.finding:first-of-type{border-top:none}
+.finding .ico{
+  width:19px;height:19px;border-radius:5px;flex:none;margin-top:1px;
+  display:grid;place-items:center;font-size:12px;font-weight:700;color:#000;
+}
+.finding .ico.good{background:var(--good);color:#fff}
+.finding .ico.warning{background:var(--warning)}
+.finding .ico.serious{background:var(--serious)}
+.finding .ico.critical{background:var(--critical);color:#fff}
+.finding .ico.info{background:var(--series-1);color:#fff}
+.finding .bd{min-width:0}
+.finding .bd b{display:block;font-size:13px}
+.finding .bd p{margin:2px 0 0;font-size:12px;opacity:.95;line-height:1.4}
+
+.tips{margin:0;padding-left:17px;font-size:12px;line-height:1.55}
+.tips li{margin:4px 0}
+
+/* ------------------------------------------------------------------- table */
+.tblwrap{max-height:300px;overflow:auto;margin-top:9px;border:1px solid var(--border);border-radius:7px}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th,td{padding:5px 9px;text-align:right;white-space:nowrap}
+th{position:sticky;top:0;background:var(--surface-2);border-bottom:1px solid var(--border);font-weight:600;z-index:1}
+td:first-child,th:first-child{text-align:left}
+tbody tr:nth-child(even){background:rgba(255,255,255,.028)}
+
+/* --------------------------------------------------------------------- log */
+.log{
+  margin:0 14px 14px;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r);
+}
+.log summary{padding:10px 14px;cursor:pointer;font-size:13px;font-weight:600;user-select:none}
+.log pre{
+  margin:0;padding:0 14px 12px;max-height:190px;overflow:auto;
+  font-size:11.5px;line-height:1.55;white-space:pre-wrap;word-break:break-all;
+}
+
+.hidden{display:none !important}
+.empty{font-size:12px;opacity:.9;padding:8px 0;line-height:1.5}
+.kv{display:flex;justify-content:space-between;font-size:12px;padding:3px 0}
+.kv b{font-weight:600}
+.badge{
+  display:inline-block;padding:1px 7px;border-radius:5px;font-size:11px;
+  border:1px solid var(--border-strong);
+}
+hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
+.note{
+  font-size:12px;line-height:1.5;background:var(--surface-2);
+  border:1px solid var(--border);border-left:3px solid var(--warning);
+  border-radius:6px;padding:8px 10px;margin-top:11px;
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+<header class="bar">
+  <div class="brand">
+    <span class="dot"></span>
+    <div>
+      <h1>rf24scan</h1>
+      <small>2.4 GHz spectrum scanner &middot; nRF24L01+ &middot; receive only</small>
+    </div>
+  </div>
+  <span class="pill" id="statusPill"><span class="led"></span><span id="statusTxt">Disconnected</span></span>
+  <span class="pill"><span class="num" id="statFps">0.0</span>&nbsp;frames/s</span>
+  <span class="pill"><span class="num" id="statFrames">0</span>&nbsp;frames</span>
+  <button class="btn primary" id="btnConnect">Connect Pico</button>
+  <button class="btn" id="btnDemo">Demo signal</button>
+</header>
+
+<main>
+  <!-- =================================================== charts column -->
+  <div class="col">
+
+    <!-- ------------------------------------------------------ waterfall -->
+    <section class="card">
+      <header>
+        <h2>Waterfall</h2>
+        <span class="sub">channel occupancy over time &middot; newest at top</span>
+        <span class="spacer"></span>
+        <select id="selPalette" style="width:auto">
+          <option value="blue">Blue ramp (default)</option>
+          <option value="inferno">Inferno (classic SDR)</option>
+        </select>
+      </header>
+
+      <div class="plot" id="wfPlot">
+        <canvas id="wf" height="300"></canvas>
+        <canvas id="wfAxis" height="30"></canvas>
+        <canvas id="bandLanes" height="104"></canvas>
+        <div class="tip" id="wfTip"></div>
+      </div>
+
+      <div class="colorbar">
+        <span>0%</span><div class="strip" id="cbStrip"></div><span>100% occupancy</span>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------ bar chart -->
+    <section class="card">
+      <header>
+        <h2>Current sweep</h2>
+        <span class="sub">probability a carrier &gt; &minus;64 dBm was present</span>
+        <span class="spacer"></span>
+        <button class="btn sm" id="btnPeakReset">Reset peaks</button>
+        <button class="btn sm" id="btnTable">Table view</button>
+      </header>
+
+      <div class="plot" id="barPlot">
+        <canvas id="bars" height="230"></canvas>
+        <canvas id="barAxis" height="26"></canvas>
+        <div class="tip" id="barTip"></div>
+      </div>
+
+      <div class="legend">
+        <span><i class="sq" style="background:var(--series-1)"></i>Live sweep</span>
+        <span><i style="background:var(--series-2)"></i>Rolling average</span>
+        <span><i style="background:var(--series-3)"></i>Peak hold</span>
+      </div>
+
+      <div id="tableView" class="hidden">
+        <div class="tblwrap">
+          <table>
+            <thead><tr><th>Ch</th><th>MHz</th><th>Live %</th><th>Avg %</th><th>Peak %</th><th>Band</th></tr></thead>
+            <tbody id="tblBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- -------------------------------------------------- compare/delta -->
+    <section class="card hidden" id="deltaCard">
+      <header>
+        <h2>Compare: device fingerprint</h2>
+        <span class="sub" id="deltaSub"></span>
+      </header>
+      <div class="plot" id="deltaPlot">
+        <canvas id="delta" height="200"></canvas>
+        <canvas id="deltaAxis" height="26"></canvas>
+        <div class="tip" id="deltaTip"></div>
+      </div>
+      <div class="legend">
+        <span><i class="sq" style="background:var(--diverge-pos)"></i>Louder with device ON</span>
+        <span><i class="sq" style="background:var(--diverge-mid)"></i>No significant change</span>
+        <span><i class="sq" style="background:var(--diverge-neg)"></i>Quieter with device ON</span>
+      </div>
+      <div id="fingerprint"></div>
+    </section>
+  </div>
+
+  <!-- =================================================== sidebar column -->
+  <div class="col">
+
+    <!-- ------------------------------------------------------ radio ctl -->
+    <section class="card">
+      <header><h2>Radio</h2></header>
+
+      <div class="ctl">
+        <label>Passes per frame <b class="num" id="lblPasses">8</b></label>
+        <input type="range" id="rngPasses" min="1" max="64" value="8">
+        <div class="hint">Samples per channel per frame. More passes = a steadier
+          probability but a slower waterfall.</div>
+      </div>
+
+      <div class="ctl">
+        <label>Dwell <b class="num" id="lblDwell">200 &micro;s</b></label>
+        <input type="range" id="rngDwell" min="40" max="600" step="10" value="200">
+        <div class="hint">RX time per sample. Below ~130&nbsp;&micro;s the PLL has not
+          relocked and readings go unreliable.</div>
+      </div>
+
+      <div class="ctl">
+        <label for="selRate">RX bandwidth</label>
+        <select id="selRate">
+          <option value="0">250 kbps &mdash; narrowest, sharpest channels</option>
+          <option value="1" selected>1 Mbps &mdash; matches the 1 MHz grid</option>
+          <option value="2">2 Mbps &mdash; widest, most sensitive</option>
+        </select>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <button class="btn" id="btnPause">Pause</button>
+        <button class="btn" id="btnPing">Re-test radio</button>
+      </div>
+      <div class="kv" style="margin-top:9px"><span>Sweep time</span><b class="num" id="kvSweep">&ndash;</b></div>
+      <div class="kv"><span>Firmware</span><b id="kvFw">&ndash;</b></div>
+    </section>
+
+    <!-- -------------------------------------------------------- compare -->
+    <section class="card">
+      <header><h2>Compare mode</h2></header>
+      <div class="hint" style="font-size:12px;opacity:.95;line-height:1.5">
+        Capture with the suspect device <b>off</b>, then <b>on</b>. Whatever
+        changed is that device.
+      </div>
+
+      <div class="ctl">
+        <label>Capture length <b class="num" id="lblCapLen">15 s</b></label>
+        <input type="range" id="rngCapLen" min="5" max="60" step="5" value="15">
+      </div>
+
+      <div class="row" style="margin-top:11px">
+        <button class="btn" id="btnCapA">Capture A &mdash; OFF</button>
+        <button class="btn" id="btnCapB">Capture B &mdash; ON</button>
+      </div>
+      <div class="kv" style="margin-top:9px"><span>Baseline A</span><b id="kvA">not captured</b></div>
+      <div class="kv"><span>Test B</span><b id="kvB">not captured</b></div>
+      <div class="row" style="margin-top:9px">
+        <button class="btn sm" id="btnClearCap">Clear</button>
+        <button class="btn sm" id="btnExportCmp" disabled>Export comparison</button>
+      </div>
+    </section>
+
+    <!-- --------------------------------------------------------- verdict -->
+    <section class="card">
+      <header>
+        <h2>Verdict</h2>
+        <span class="spacer"></span>
+        <span class="badge" id="verdictScope">live</span>
+      </header>
+      <div id="verdictBody"><div class="empty">Waiting for data&hellip;</div></div>
+    </section>
+
+    <!-- ------------------------------------------------------- recording -->
+    <section class="card">
+      <header><h2>Record &amp; export</h2></header>
+      <div class="row">
+        <button class="btn" id="btnRec">Start recording</button>
+      </div>
+      <div class="kv" style="margin-top:9px"><span>Recorded</span><b class="num" id="kvRec">0 frames</b></div>
+      <hr class="sep">
+      <div class="row">
+        <button class="btn sm" id="btnExpJson" disabled>Session JSON</button>
+        <button class="btn sm" id="btnExpCsv" disabled>Summary CSV</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn sm" id="btnExpWf" disabled>Waterfall CSV</button>
+        <button class="btn sm" id="btnExpPng">Waterfall PNG</button>
+      </div>
+      <hr class="sep">
+      <div class="row">
+        <button class="btn sm" id="btnLoad">Load session JSON</button>
+        <input type="file" id="fileLoad" accept=".json" class="hidden">
+      </div>
+    </section>
+  </div>
+</main>
+
+<details class="log">
+  <summary>Serial log</summary>
+  <pre id="logBox" class="mono"></pre>
+</details>
+</div>
+
+<script>
+"use strict";
+/* ===========================================================================
+   rf24scan web tool - single file, no dependencies, no network.
+   Talks to the Pico over the Web Serial API (Chrome / Edge / Opera desktop).
+   ========================================================================= */
+
+const NCH = 126;                       // nRF24 channels 0..125
+const MHZ = c => 2400 + c;             // channel -> MHz
+const WF_ROWS = 300;                   // waterfall history depth, in rows
+const MAX_FRAMES = 4000;               // ring cap so a long session cannot OOM
+
+const $ = id => document.getElementById(id);
+const clamp = (v,a,b) => v<a?a:v>b?b:v;
+
+/* --------------------------------------------------------------- protocols */
+/* Each lane is one protocol family with its own label, so identity is never
+   carried by colour alone. Segments are nRF channel spans, inclusive.        */
+const LANES = [
+  { key:'wifi', label:'Wi-Fi',        color:'--band-wifi', segs:[
+      {lo:2,  hi:22, name:'ch 1'},
+      {lo:27, hi:47, name:'ch 6'},
+      {lo:52, hi:72, name:'ch 11'},
+      {lo:62, hi:82, name:'ch 13', outline:true},   // EU/JP only
+  ]},
+  { key:'bt', label:'BT Classic',     color:'--band-bt', segs:[
+      {lo:2, hi:80, name:'79 hop channels'},
+  ]},
+  { key:'ble', label:'BLE adv',       color:'--band-ble', segs:[
+      {lo:1,  hi:3,  name:'37'},
+      {lo:25, hi:27, name:'38'},
+      {lo:79, hi:81, name:'39'},
+  ]},
+  { key:'zigbee', label:'Zigbee',     color:'--band-zig', segs:
+      Array.from({length:16},(_,k)=>({lo:5+5*k-1, hi:5+5*k+1, name:'ch '+(11+k)})),
+  },
+  { key:'oob', label:'Above ISM',     color:'--band-oob', segs:[
+      {lo:84, hi:125, name:'control zone - should be silent'},
+  ]},
+];
+
+function bandsAt(ch){
+  const out = [];
+  for (const ln of LANES)
+    for (const s of ln.segs)
+      if (ch >= s.lo && ch <= s.hi) { out.push(ln.label + ' ' + s.name); break; }
+  return out;
+}
+
+/* ------------------------------------------------------------- colour ramp */
+/* Sequential = ONE hue, light->dark, anchor flipped for the dark surface:
+   value 0 sits on the surface colour and recedes; high energy comes forward. */
+const RAMP_BLUE = ['#1a1a19','#0d366b','#104281','#184f95','#1c5cab','#256abf',
+                   '#2a78d6','#3987e5','#5598e7','#6da7ec','#86b6ef','#9ec5f4',
+                   '#b7d3f6','#cde2fb'];
+/* Opt-in only, for readers with SDR muscle memory. Not the default: multi-hue
+   ramps make magnitude harder to read back than a single-hue lightness ramp. */
+const RAMP_INFERNO = ['#000004','#160b39','#420a68','#6a176e','#932667','#bc3754',
+                      '#dd513a','#f37819','#fca50a','#f6d746','#fcffa4'];
+
+const hex2rgb = h => [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
+
+function buildLUT(stops){
+  const src = stops.map(hex2rgb), lut = new Uint8Array(256*3);
+  for (let i=0;i<256;i++){
+    const t = i/255*(src.length-1), k = Math.min(Math.floor(t), src.length-2), f = t-k;
+    for (let c=0;c<3;c++) lut[i*3+c] = src[k][c] + (src[k+1][c]-src[k][c])*f;
+  }
+  return lut;
+}
+let LUT = buildLUT(RAMP_BLUE);
+
+/* =========================================================== global state */
+const S = {
+  frames: [],                       // every frame this session (ring-capped)
+  live: null,
+  avg:  new Float32Array(NCH),      // exponential moving average, %
+  peak: new Float32Array(NCH),
+  avgInit: false,
+  connected:false, demo:false, paused:false,
+  fw:'-', sweepMs:0,
+  recording:false, recFrames:[], recStart:0,
+  capturing:null,                   // {which,'A'|'B', endsAt, frames:[]}
+  capA:null, capB:null,             // {frames, stats, at}
+  fpsT:performance.now(), fpsN:0,
+};
+
+/* ============================================================ serial layer */
+let port=null, reader=null, writer=null, readLoopAlive=false;
+
+function log(line, kind){
+  const box = $('logBox');
+  const stamp = new Date().toLocaleTimeString();
+  box.textContent += `[${stamp}] ${line}\n`;
+  // keep the log bounded; a multi-hour session would otherwise grow forever
+  if (box.textContent.length > 60000) box.textContent = box.textContent.slice(-40000);
+  box.scrollTop = box.scrollHeight;
+}
+
+function setStatus(text, cls){
+  $('statusTxt').textContent = text;
+  $('statusPill').className = 'pill' + (cls ? ' '+cls : '');
+}
+
+async function connect(){
+  if (!('serial' in navigator)){
+    setStatus('Web Serial unavailable','err');
+    log('This browser has no Web Serial API. Use Chrome, Edge or Opera on desktop, '
+      + 'or run web/serve.py and open http://localhost:8000');
+    alert('Web Serial is not available in this browser.\n\n'
+        + 'Use Chrome, Edge or Opera on desktop.\n'
+        + 'Firefox and Safari do not implement Web Serial.');
+    return;
+  }
+  try{
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate:115200 });
+    writer = port.writable.getWriter();
+    S.connected = true; S.demo = false;
+    setStatus('Connected','on');
+    $('btnConnect').textContent = 'Disconnect';
+    log('Serial port opened.');
+    readLoop();
+    setTimeout(()=>{ send('?'); pushSettings(); }, 260);
+  }catch(err){
+    if (err && err.name === 'NotFoundError') { log('Port selection cancelled.'); return; }
+    setStatus('Connect failed','err');
+    log('Connect failed: ' + err);
+  }
+}
+
+async function disconnect(){
+  readLoopAlive = false;
+  try{ if (reader) await reader.cancel(); }catch(e){}
+  try{ if (writer){ writer.releaseLock(); writer=null; } }catch(e){}
+  try{ if (port) await port.close(); }catch(e){}
+  port=null; S.connected=false;
+  setStatus('Disconnected','');
+  $('btnConnect').textContent = 'Connect Pico';
+  log('Disconnected.');
+}
+
+async function readLoop(){
+  const dec = new TextDecoder();
+  let buf = '';
+  readLoopAlive = true;
+  try{
+    reader = port.readable.getReader();
+    while (readLoopAlive){
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream:true });
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0){
+        handleLine(buf.slice(0,i).replace(/\r$/,''));
+        buf = buf.slice(i+1);
+      }
+      if (buf.length > 8192) buf = '';        // resync on garbage
+    }
+  }catch(err){
+    log('Read error: ' + err);
+    setStatus('Serial error','err');
+  }finally{
+    try{ reader.releaseLock(); }catch(e){}
+    reader = null;
+  }
+}
+
+async function send(cmd){
+  if (!writer) return;
+  try{ await writer.write(new TextEncoder().encode(cmd + '\n')); }
+  catch(err){ log('Write failed: ' + err); }
+}
+
+function pushSettings(){
+  send('P' + $('rngPasses').value);
+  send('D' + $('rngDwell').value);
+  send('B' + $('selRate').value);
+}
+
+/* ------------------------------------------------------------- line parser */
+function handleLine(line){
+  if (!line) return;
+  if (line[0] === 'S' && line[1] === ' '){
+    const f = parseFrame(line);
+    if (f) onFrame(f);
+    return;
+  }
+  if (line[0] === '#'){
+    if (line.startsWith('#hb ')) return;                 // heartbeat, not noise
+    log(line);
+    if (line.startsWith('#rf24scan')) { S.fw = line.split(' ')[1] || '?'; $('kvFw').textContent = S.fw; }
+    if (line.startsWith('#err'))      setStatus('Radio fault','err');
+    if (line.startsWith('#info')){
+      if (line.includes('radio=ok')) setStatus(S.paused?'Paused':'Scanning','on');
+      else if (line.includes('radio=MISSING')) setStatus('Radio not found','err');
+    }
+    return;
+  }
+  log('? ' + line);
+}
+
+function parseFrame(line){
+  const p = line.split(' ');
+  if (p.length < 8) return null;
+  const passes=+p[2], dwell=+p[3], ms=+p[4], lo=+p[5], hi=+p[6], hex=p[7];
+  const n = hi - lo + 1;
+  if (!(n>0 && n<=NCH) || hex.length !== n*2 || !passes) return null;
+  const pct = new Float32Array(NCH);
+  for (let i=0;i<n;i++){
+    const v = parseInt(hex.substr(i*2,2),16);
+    if (Number.isNaN(v)) return null;
+    pct[lo+i] = v/passes*100;
+  }
+  return { seq:+p[1], passes, dwell, ms, lo, hi, pct, t:Date.now() };
+}
+
+/* ======================================================== frame ingestion */
+function onFrame(f){
+  S.live = f; S.sweepMs = f.ms;
+  S.frames.push(f);
+  if (S.frames.length > MAX_FRAMES) S.frames.shift();
+
+  // EMA tracks the ambient picture; peak-hold keeps the worst ever seen.
+  const a = S.avgInit ? 0.12 : 1.0;
+  for (let i=0;i<NCH;i++){
+    S.avg[i] += (f.pct[i]-S.avg[i]) * a;
+    if (f.pct[i] > S.peak[i]) S.peak[i] = f.pct[i];
+  }
+  S.avgInit = true;
+
+  if (S.recording) S.recFrames.push(f);
+  if (S.capturing){
+    S.capturing.frames.push(f);
+    if (Date.now() >= S.capturing.endsAt) finishCapture();
+  }
+
+  pushWaterfallRow(f.pct);
+  S.fpsN++;
+  $('statFrames').textContent = S.frames.length;
+  $('kvSweep').textContent = f.ms + ' ms';
+  $('kvRec').textContent = S.recFrames.length + ' frames';
+  dirty = true;
+}
+
+setInterval(()=>{
+  const now = performance.now(), dt = (now-S.fpsT)/1000;
+  $('statFps').textContent = (S.fpsN/dt).toFixed(1);
+  S.fpsN = 0; S.fpsT = now;
+}, 1000);
+
+/* ========================================================= canvas plumbing */
+function fitCanvas(cv, cssH){
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.parentElement.clientWidth;
+  cv.style.height = cssH + 'px';
+  if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(cssH*dpr)){
+    cv.width  = Math.round(w*dpr);
+    cv.height = Math.round(cssH*dpr);
+  }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  return { ctx, w, h:cssH };
+}
+
+// Left gutter has to clear the widest thing in it, which is a band-lane label
+// ("BT Classic"), not the y-axis numbers.
+const PAD_L = 68, PAD_R = 10;
+const plotW = w => Math.max(10, w - PAD_L - PAD_R);
+const chX   = (ch,w) => PAD_L + (ch+0.5)/NCH*plotW(w);
+
+/* ---------------------------------------------------------- waterfall data */
+const wfOff = document.createElement('canvas');
+wfOff.width = NCH; wfOff.height = WF_ROWS;
+const wfOffCtx = wfOff.getContext('2d');
+const wfImg = wfOffCtx.createImageData(NCH, WF_ROWS);
+{ const d = wfImg.data; for (let i=3;i<d.length;i+=4) d[i]=255; }
+const wfTimes = new Array(WF_ROWS).fill(0);
+const wfRows  = Array.from({length:WF_ROWS}, ()=>new Float32Array(NCH));
+
+function pushWaterfallRow(pct){
+  const d = wfImg.data, rowBytes = NCH*4;
+  d.copyWithin(rowBytes, 0, rowBytes*(WF_ROWS-1));    // scroll down one row
+  for (let i=0;i<NCH;i++){
+    const idx = clamp(Math.round(pct[i]/100*255), 0, 255)*3;
+    d[i*4  ] = LUT[idx];
+    d[i*4+1] = LUT[idx+1];
+    d[i*4+2] = LUT[idx+2];
+  }
+  wfRows.pop(); wfRows.unshift(Float32Array.from(pct));
+  wfTimes.pop(); wfTimes.unshift(Date.now());
+}
+
+function repaintWaterfallFromRows(){
+  const d = wfImg.data;
+  for (let r=0;r<WF_ROWS;r++){
+    const row = wfRows[r], o = r*NCH*4;
+    for (let i=0;i<NCH;i++){
+      const idx = clamp(Math.round(row[i]/100*255),0,255)*3;
+      d[o+i*4] = LUT[idx]; d[o+i*4+1] = LUT[idx+1]; d[o+i*4+2] = LUT[idx+2];
+    }
+  }
+}
+
+function drawWaterfall(){
+  const { ctx, w, h } = fitCanvas($('wf'), 300);
+  ctx.clearRect(0,0,w,h);
+  wfOffCtx.putImageData(wfImg,0,0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(wfOff, PAD_L, 0, plotW(w), h);
+
+  // elapsed-time ticks down the left edge
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  const now = Date.now();
+  for (let r=60;r<WF_ROWS;r+=60){
+    if (!wfTimes[r]) continue;
+    const secs = Math.round((now - wfTimes[r])/1000);
+    const y = r/WF_ROWS*h;
+    ctx.globalAlpha = .55; ctx.strokeStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(PAD_L,y+.5); ctx.lineTo(PAD_L+5,y+.5); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillText('-'+secs+'s', PAD_L-7, y);
+  }
+  if (hoverCh !== null){
+    ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 1;
+    const x = Math.round(chX(hoverCh,w))+.5;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
+  }
+}
+
+/* ------------------------------------------------------------ frequency axis */
+function drawFreqAxis(cv, cssH){
+  const { ctx, w, h } = fitCanvas(cv, cssH);
+  ctx.clearRect(0,0,w,h);
+  ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.strokeStyle = '#383835'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PAD_L,.5); ctx.lineTo(w-PAD_R,.5); ctx.stroke();
+  for (let c=0;c<=125;c+=10){
+    const x = chX(c,w);
+    ctx.strokeStyle = '#383835';
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,4); ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(MHZ(c), x, 6);
+  }
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#ffffff';
+  ctx.globalAlpha = .9;
+  ctx.fillText('MHz', PAD_L, 17);
+  ctx.globalAlpha = 1;
+}
+
+/* --------------------------------------------------------------- band lanes */
+function drawLanes(){
+  const cv = $('bandLanes');
+  const { ctx, w, h } = fitCanvas(cv, 104);
+  ctx.clearRect(0,0,w,h);
+  const laneH = 15, gap = 5;
+  ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+  ctx.textBaseline = 'middle';
+
+  LANES.forEach((ln, li) => {
+    const y = li*(laneH+gap) + 2;
+    const col = getComputedStyle(document.documentElement).getPropertyValue(ln.color).trim();
+
+    ctx.textAlign = 'right'; ctx.fillStyle = '#ffffff';
+    ctx.fillText(ln.label, PAD_L-7, y + laneH/2);
+
+    ctx.fillStyle = '#141413';
+    ctx.fillRect(PAD_L, y, plotW(w), laneH);
+
+    for (const s of ln.segs){
+      const x0 = PAD_L + s.lo/NCH*plotW(w);
+      const x1 = PAD_L + (s.hi+1)/NCH*plotW(w);
+      if (s.outline){
+        ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.setLineDash([3,2]);
+        ctx.strokeRect(x0+.5, y+.5, Math.max(1,x1-x0-1), laneH-1);
+        ctx.setLineDash([]);
+      } else {
+        ctx.fillStyle = col; ctx.globalAlpha = .82;
+        ctx.fillRect(x0, y, Math.max(1.5, x1-x0-2), laneH);   // 2px surface gap
+        ctx.globalAlpha = 1;
+      }
+      const lw = ctx.measureText(s.name).width;
+      if (x1-x0 > lw+9 && !s.outline){
+        ctx.fillStyle = '#000000'; ctx.textAlign = 'center';
+        ctx.fillText(s.name, (x0+x1)/2, y+laneH/2);
+      }
+    }
+  });
+  if (hoverCh !== null){
+    ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1;
+    const x = Math.round(chX(hoverCh,w))+.5;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
+  }
+}
+
+/* ---------------------------------------------------------------- bar chart */
+function drawBars(){
+  const { ctx, w, h } = fitCanvas($('bars'), 230);
+  ctx.clearRect(0,0,w,h);
+  const pw = plotW(w), top = 10, base = h-6, ph = base-top;
+  const yOf = v => base - (v/100)*ph;
+  const font = getComputedStyle(document.body).fontFamily;
+
+  // gridlines + y axis (recessive)
+  ctx.font = '10px ' + font; ctx.textAlign='right'; ctx.textBaseline='middle';
+  for (let v=0;v<=100;v+=25){
+    const y = Math.round(yOf(v))+.5;
+    ctx.strokeStyle = v===0 ? '#383835' : '#2c2c2a'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PAD_L,y); ctx.lineTo(w-PAD_R,y); ctx.stroke();
+    ctx.fillStyle = '#ffffff'; ctx.globalAlpha = .9;
+    ctx.fillText(v+'%', PAD_L-7, yOf(v));
+    ctx.globalAlpha = 1;
+  }
+
+  if (!S.live){
+    ctx.fillStyle='#ffffff'; ctx.globalAlpha=.9; ctx.textAlign='center';
+    ctx.fillText('No data yet - connect the Pico or press "Demo signal"', PAD_L+pw/2, top+ph/2);
+    ctx.globalAlpha=1;
+    return;
+  }
+
+  // bars: one series, one hue. Colouring by value would re-encode height.
+  const slot = pw/NCH, bw = Math.max(1.5, slot-2);       // 2px surface gap
+  const r = Math.min(2, bw/2);
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--series-1').trim();
+  for (let c=0;c<NCH;c++){
+    const v = S.live.pct[c];
+    if (v <= 0) continue;
+    const x = PAD_L + c*slot + 1, y = yOf(v), bh = base-y;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y, bw, bh, [r,r,0,0]);
+    else ctx.rect(x, y, bw, bh);
+    ctx.fill();
+  }
+
+  // peak hold: thin ticks
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--series-3').trim();
+  ctx.lineWidth = 2; ctx.beginPath();
+  for (let c=0;c<NCH;c++){
+    if (S.peak[c] <= 0) continue;
+    const x = PAD_L + c*slot + 1, y = Math.round(yOf(S.peak[c]))+.5;
+    ctx.moveTo(x, y); ctx.lineTo(x+bw, y);
+  }
+  ctx.stroke();
+
+  // rolling average: 2px line
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--series-2').trim();
+  ctx.lineWidth = 2; ctx.lineJoin='round'; ctx.beginPath();
+  for (let c=0;c<NCH;c++){
+    const x = chX(c,w), y = yOf(S.avg[c]);
+    c ? ctx.lineTo(x,y) : ctx.moveTo(x,y);
+  }
+  ctx.stroke();
+
+  // Selective direct labels: three DISTINCT peaks. Taking the plain top three
+  // would label ch 40/41/42 - three pixels of one peak - and overprint them.
+  const top3 = [];
+  for (const c of Array.from({length:NCH},(_,i)=>i).sort((a,b)=>S.avg[b]-S.avg[a])){
+    if (S.avg[c] <= 6 || top3.length >= 3) break;
+    if (top3.every(p => Math.abs(p-c) >= 7)) top3.push(c);
+  }
+  ctx.font = '600 10px ' + font; ctx.textAlign='center'; ctx.textBaseline='bottom';
+  ctx.fillStyle = '#ffffff';
+  for (const c of top3){
+    const y = Math.min(yOf(S.avg[c]), yOf(S.peak[c]));
+    ctx.fillText('ch '+c, clamp(chX(c,w), PAD_L+14, w-PAD_R-14), Math.max(11, y-5));
+  }
+
+  if (hoverCh !== null){
+    ctx.strokeStyle='rgba(255,255,255,.8)'; ctx.lineWidth=1;
+    const x = Math.round(chX(hoverCh,w))+.5;
+    ctx.beginPath(); ctx.moveTo(x,top-6); ctx.lineTo(x,base); ctx.stroke();
+  }
+}
+
+/* -------------------------------------------------------------- delta chart */
+function drawDelta(){
+  if (!S.capA || !S.capB) return;
+  const { ctx, w, h } = fitCanvas($('delta'), 200);
+  ctx.clearRect(0,0,w,h);
+  const pw = plotW(w), top=12, bot=h-10, mid=(top+bot)/2;
+  const d = deltaData();
+  const span = Math.max(12, d.absMax);
+  const yOf = v => mid - (v/span)*((bot-top)/2);
+  const font = getComputedStyle(document.body).fontFamily;
+
+  ctx.font='10px '+font; ctx.textAlign='right'; ctx.textBaseline='middle';
+  for (const v of [span, span/2, 0, -span/2, -span]){
+    const y = Math.round(yOf(v))+.5;
+    ctx.strokeStyle = v===0 ? '#383835' : '#2c2c2a';
+    ctx.beginPath(); ctx.moveTo(PAD_L,y); ctx.lineTo(w-PAD_R,y); ctx.stroke();
+    ctx.fillStyle='#ffffff'; ctx.globalAlpha=.9;
+    ctx.fillText((v>0?'+':'')+v.toFixed(0), PAD_L-7, yOf(v)); ctx.globalAlpha=1;
+  }
+
+  const cs = getComputedStyle(document.documentElement);
+  const POS = cs.getPropertyValue('--diverge-pos').trim();
+  const NEG = cs.getPropertyValue('--diverge-neg').trim();
+  const MID = cs.getPropertyValue('--diverge-mid').trim();
+  const slot = pw/NCH, bw = Math.max(1.5, slot-2);
+
+  for (let c=0;c<NCH;c++){
+    const v = d.delta[c];
+    if (Math.abs(v) < 0.5) continue;
+    ctx.fillStyle = d.sig[c] ? (v>0?POS:NEG) : MID;
+    const x = PAD_L + c*slot + 1;
+    const y = v>0 ? yOf(v) : mid;
+    ctx.fillRect(x, y, bw, Math.max(1, Math.abs(yOf(v)-mid)));
+  }
+
+  // label the strongest movers
+  const movers = d.ranked.slice(0,3);
+  ctx.font='600 10px '+font; ctx.textAlign='center';
+  ctx.fillStyle='#ffffff';
+  for (const m of movers){
+    ctx.textBaseline = m.delta>0 ? 'bottom' : 'top';
+    ctx.fillText('ch '+m.ch, clamp(chX(m.ch,w),PAD_L+14,w-PAD_R-14),
+                 yOf(m.delta) + (m.delta>0?-4:4));
+  }
+  if (hoverChD !== null){
+    ctx.strokeStyle='rgba(255,255,255,.8)'; ctx.lineWidth=1;
+    const x=Math.round(chX(hoverChD,w))+.5;
+    ctx.beginPath(); ctx.moveTo(x,top); ctx.lineTo(x,bot); ctx.stroke();
+  }
+}
+
+/* ============================================================= render pump */
+let dirty = true, hoverCh = null, hoverChD = null;
+function frameLoop(){
+  if (dirty){
+    drawWaterfall(); drawBars();
+    if (!$('deltaCard').classList.contains('hidden')) drawDelta();
+    if (!$('tableView').classList.contains('hidden')) renderTable();
+    dirty = false;
+  }
+  requestAnimationFrame(frameLoop);
+}
+function redrawStatic(){
+  drawFreqAxis($('wfAxis'), 30);
+  drawFreqAxis($('barAxis'), 26);
+  drawFreqAxis($('deltaAxis'), 26);
+  drawLanes();
+  dirty = true;
+}
+window.addEventListener('resize', redrawStatic);
+
+/* ============================================================== statistics */
+function statsOf(frames){
+  const n = frames.length;
+  const mean = new Float32Array(NCH), max = new Float32Array(NCH), sd = new Float32Array(NCH);
+  if (!n) return { n:0, mean, max, sd };
+  for (const f of frames)
+    for (let i=0;i<NCH;i++){ mean[i]+=f.pct[i]; if (f.pct[i]>max[i]) max[i]=f.pct[i]; }
+  for (let i=0;i<NCH;i++) mean[i]/=n;
+  if (n>1){
+    for (const f of frames)
+      for (let i=0;i<NCH;i++){ const dv=f.pct[i]-mean[i]; sd[i]+=dv*dv; }
+    for (let i=0;i<NCH;i++) sd[i] = Math.sqrt(sd[i]/(n-1));
+  }
+  return { n, mean, max, sd };
+}
+const median = arr => {
+  if (!arr.length) return 0;
+  const s = Array.from(arr).sort((a,b)=>a-b), m = s.length>>1;
+  return s.length%2 ? s[m] : (s[m-1]+s[m])/2;
+};
+function runsOf(flags){
+  const out=[]; let start=-1;
+  for (let i=0;i<=NCH;i++){
+    if (i<NCH && flags[i]){ if (start<0) start=i; }
+    else if (start>=0){ out.push({lo:start, hi:i-1, len:i-start}); start=-1; }
+  }
+  return out;
+}
+const nearestWifi = center => {
+  // Wi-Fi ch k has centre 2412+5(k-1) MHz -> nRF channel 12+5(k-1)
+  let best=1, bd=1e9;
+  for (let k=1;k<=13;k++){ const d=Math.abs(12+5*(k-1)-center); if (d<bd){bd=d;best=k;} }
+  return { ch:best, off:bd };
+};
+
+/* ================================================================= verdict */
+function computeVerdict(st, scope){
+  const { mean, sd, n } = st;
+  const findings = [], tips = [];
+  if (!n){ return { findings:[{sev:'info',icon:'i',title:'No data',body:'Connect the Pico or run the demo signal.'}], tips:[] }; }
+
+  // Channels 84-125 sit above the 2483.5 MHz ISM edge, so nothing legitimate
+  // lives there. That makes them a free noise-floor reference.
+  const ctrl = []; for (let i=84;i<=125;i++) ctrl.push(mean[i]);
+  const floor = median(ctrl);
+  const thr = Math.max(8, floor + 10);
+  const busy = new Array(NCH).fill(false);
+  for (let i=0;i<NCH;i++) busy[i] = mean[i] > thr;
+
+  const ranked = Array.from({length:NCH},(_,i)=>i).sort((a,b)=>mean[b]-mean[a]);
+  const topList = ranked.slice(0,6).filter(c=>mean[c]>1);
+
+  // ---- headline -----------------------------------------------------------
+  const inBand = mean.slice(2,81);
+  const busyMean = Array.from(inBand).reduce((a,b)=>a+b,0)/inBand.length;
+  let sev, title;
+  if (busyMean < 6)       { sev='good';     title='Band is quiet'; }
+  else if (busyMean < 18) { sev='warning';  title='Moderate congestion'; }
+  else if (busyMean < 35) { sev='serious';  title='Busy band'; }
+  else                    { sev='critical'; title='Severely congested'; }
+  findings.push({ sev, icon:sev==='good'?'✓':'!', title,
+    body:`Average in-band occupancy ${busyMean.toFixed(1)}% across 2402-2480 MHz, `
+       + `measured over ${n} frame${n===1?'':'s'}. Noise floor reference (above the `
+       + `ISM edge) reads ${floor.toFixed(1)}%.` });
+
+  // ---- Wi-Fi plateaus -----------------------------------------------------
+  const plateaus = runsOf(busy).filter(r => r.len >= 12);
+  for (const p of plateaus){
+    const center = (p.lo+p.hi)/2, wf = nearestWifi(center);
+    let peakC = p.lo; for (let c=p.lo;c<=p.hi;c++) if (mean[c]>mean[peakC]) peakC=c;
+    findings.push({ sev:'serious', icon:'!', title:`Wi-Fi carrier near channel ${wf.ch}`,
+      body:`A ${p.len}-channel plateau spans ${MHZ(p.lo)}-${MHZ(p.hi)} MHz `
+         + `(peak ${mean[peakC].toFixed(0)}% at ${MHZ(peakC)} MHz). A flat block roughly `
+         + `20 MHz wide that holds steady is the signature of a Wi-Fi access point. `
+         + `Closest standard channel: Wi-Fi ${wf.ch}.`,
+      chans:[p.lo,p.hi] });
+  }
+
+  // ---- narrowband spikes --------------------------------------------------
+  const spikes = [];
+  for (let c=1;c<NCH-1;c++){
+    if (mean[c] < thr) continue;
+    if (mean[c] < mean[c-1] || mean[c] < mean[c+1]) continue;   // local max only
+    const nb=[];
+    for (let k=c-9;k<=c+9;k++) if (k>=0 && k<NCH && Math.abs(k-c)>2) nb.push(mean[k]);
+    const local = median(nb);
+    let width=1;
+    for (let k=c-1;k>=0 && mean[k]>Math.max(thr*0.6, local*1.6);k--) width++;
+    for (let k=c+1;k<NCH && mean[k]>Math.max(thr*0.6, local*1.6);k++) width++;
+    if (width <= 5 && mean[c] > Math.max(thr, local*2.2 + 4)) spikes.push({c,width,amp:mean[c],local});
+  }
+  spikes.sort((a,b)=>b.amp-a.amp);
+  const bleAdv = new Set([1,2,3,25,26,27,79,80,81]);
+  const advHits = [];
+  let narrowShown = 0;
+  for (const sp of spikes){
+    // The three BLE advertising channels collapse into one finding - emitting a
+    // near-identical card per channel buries the findings that actually matter.
+    if (bleAdv.has(sp.c)){ if (!advHits.includes(sp.c)) advHits.push(sp.c); continue; }
+    if (narrowShown++ >= 3) continue;
+    // A spike inside a Wi-Fi plateau is NOT suppressed: the spike test already
+    // measures against the local background, so anything that survives it is
+    // genuinely above the plateau - and an emitter parked on a Wi-Fi channel is
+    // precisely the finding worth surfacing.
+    const onWifi = plateaus.some(p=>sp.c>=p.lo && sp.c<=p.hi);
+    const jitter = sd[sp.c] / Math.max(1, mean[sp.c]);
+    findings.push({ sev:'serious', icon:'!',
+      title:`Narrowband emitter at ${MHZ(sp.c)} MHz`,
+      body:`${sp.width} channel${sp.width===1?'':'s'} wide, ${sp.amp.toFixed(0)}% occupancy `
+        + `against a ${sp.local.toFixed(0)}% local background, `
+        + `${jitter<0.35?'and rock steady over time':'and fluctuating over time'}. `
+        + `A spike this narrow that never moves is a fixed-frequency proprietary radio: `
+        + `an LED/RGB controller, a wireless mouse or keyboard dongle, an RF remote, a `
+        + `baby monitor, or a wireless doorbell.`
+        + (onWifi ? ` It sits directly on top of the Wi-Fi carrier above, so the two are `
+          + `fighting over the same slice of spectrum.` : ''),
+      chans:[sp.c,sp.c] });
+  }
+  if (advHits.length){
+    advHits.sort((a,b)=>a-b);
+    findings.push({ sev:'warning', icon:'!', title:'Bluetooth LE advertising',
+      body:`Beacon activity at ${advHits.map(c=>MHZ(c)+' MHz').join(', ')} - the BLE `
+        + `advertising channels (37/38/39). Every BLE device in range beacons here, so `
+        + `this is expected, not a fault. It still costs your headphones airtime when `
+        + `the room is full of beaconing devices.` });
+  }
+
+  // ---- frequency hopping --------------------------------------------------
+  let sdSum=0, mSum=0;
+  for (let c=2;c<=80;c++){ sdSum+=sd[c]; mSum+=mean[c]; }
+  const jitterRatio = mSum>0 ? sdSum/mSum : 0;
+  if (n>=8 && mSum/79 > 4 && jitterRatio > 0.55 && plateaus.length===0){
+    findings.push({ sev:'warning', icon:'!', title:'Frequency-hopping traffic',
+      body:`Energy across 2402-2480 MHz is spread and highly variable frame to frame `
+         + `(jitter ratio ${jitterRatio.toFixed(2)}). That is Bluetooth or a proprietary `
+         + `hopping link, not a fixed carrier - including, most likely, your own `
+         + `headphones. Hoppers are hard to pin to one channel by design.` });
+  }
+
+  // ---- front-end overload -------------------------------------------------
+  if (floor > 15){
+    findings.push({ sev:'critical', icon:'!', title:'Receiver being overloaded',
+      body:`Channels above 2484 MHz should be dead, but they read ${floor.toFixed(0)}% `
+         + `occupancy. With a PA+LNA module that means a very strong transmitter is `
+         + `saturating the front end and bleeding across the whole sweep. Move the `
+         + `scanner further from the suspect device before trusting any other number here.` });
+  }
+
+  // ---- recommendations ----------------------------------------------------
+  const wifiSpans = [{ch:1,lo:2,hi:22},{ch:6,lo:27,hi:47},{ch:11,lo:52,hi:72}];
+  const scored = wifiSpans.map(s=>{
+    let sum=0; for (let c=s.lo;c<=s.hi;c++) sum+=mean[c];
+    return { ...s, load:sum/(s.hi-s.lo+1) };
+  }).sort((a,b)=>a.load-b.load);
+  tips.push(`Quietest Wi-Fi channel here is <b>${scored[0].ch}</b> `
+    + `(${scored[0].load.toFixed(0)}% average load, versus ${scored[2].load.toFixed(0)}% `
+    + `on channel ${scored[2].ch}). Set your router to it - do not use "auto".`);
+
+  let bestC=2, bestSum=Infinity;
+  for (let c=3;c<=78;c++){
+    const s = mean[c-1]+mean[c]+mean[c+1];
+    if (s < bestSum){ bestSum=s; bestC=c; }
+  }
+  tips.push(`Cleanest 3 MHz window is around <b>${MHZ(bestC)} MHz</b> `
+    + `(channels ${bestC-1}-${bestC+1}, ${(bestSum/3).toFixed(0)}% average).`);
+
+  if (spikes.length && !spikes.every(s=>bleAdv.has(s.c)))
+    tips.push('Use <b>Compare mode</b> to confirm the narrowband spike: capture with the '
+      + 'suspect box unplugged, then plugged in. Whatever appears is that device.');
+
+  tips.push('Bluetooth already dodges busy channels with adaptive hopping (AFH), so a '
+    + '<i>narrow</i> interferer costs you little. A <i>wideband</i> one leaves it nowhere '
+    + 'to hop, which is what causes audio dropouts.');
+  tips.push('Move your headphone transmitter/dongle onto a USB extension cable, away from '
+    + 'the PC. <b>USB 3.0 ports and their cables radiate broadband noise right across '
+    + '2.4 GHz</b> - a very common and often-missed cause.');
+  tips.push('Push your Wi-Fi to 5 GHz where you can. It vacates the band entirely rather '
+    + 'than competing for it.');
+  tips.push('Keep line of sight between headphones and transmitter. A body between them '
+    + 'costs more signal than most interference does.');
+
+  return { findings, tips, floor, thr, topList, mean };
+}
+
+function renderVerdict(){
+  const scope = ($('verdictScope').textContent||'live');
+  let st, label;
+  if (S.capB){ st = S.capB.stats; label = 'capture B'; }
+  else if (S.frames.length){ st = statsOf(S.frames.slice(-90)); label = 'live'; }
+  else { st = statsOf([]); label='live'; }
+  $('verdictScope').textContent = label;
+
+  const v = computeVerdict(st, label);
+  const box = $('verdictBody');
+  let html = '';
+  for (const f of v.findings){
+    html += `<div class="finding"><div class="ico ${f.sev}">${f.icon}</div>`
+         +  `<div class="bd"><b>${f.title}</b><p>${f.body}</p></div></div>`;
+  }
+  if (v.topList && v.topList.length){
+    html += `<hr class="sep"><h3>Most active channels</h3>`;
+    for (const c of v.topList){
+      const b = bandsAt(c);
+      html += `<div class="kv"><span>ch ${c} &middot; ${MHZ(c)} MHz</span>`
+           +  `<b class="num">${st.mean[c].toFixed(0)}%</b></div>`
+           +  (b.length?`<div style="font-size:11px;opacity:.9;margin:-2px 0 5px">${b.join(' &middot; ')}</div>`:'');
+    }
+  }
+  if (v.tips && v.tips.length){
+    html += `<hr class="sep"><h3>How to reduce it</h3><ul class="tips">`;
+    for (const t of v.tips) html += `<li>${t}</li>`;
+    html += `</ul>`;
+  }
+  box.innerHTML = html;
+}
+setInterval(()=>{ if (S.frames.length) renderVerdict(); }, 2000);
+
+/* ================================================================= compare */
+function startCapture(which){
+  if (!S.frames.length && !S.demo){ alert('Connect the Pico (or start the demo signal) first.'); return; }
+  const secs = +$('rngCapLen').value;
+  // In demo mode the synthetic emitter follows the A/B buttons, standing in for
+  // you physically unplugging the box. On real hardware you do that yourself.
+  if (S.demo) demoDeviceOn = (which === 'B');
+  S.capturing = { which, endsAt: Date.now()+secs*1000, frames:[] };
+  $('kv'+which).textContent = 'capturing…';
+  $('btnCapA').disabled = $('btnCapB').disabled = true;
+  log(`Capture ${which}: recording ${secs}s…`);
+}
+function finishCapture(){
+  const cap = S.capturing; S.capturing = null;
+  $('btnCapA').disabled = $('btnCapB').disabled = false;
+  if (!cap.frames.length){ $('kv'+cap.which).textContent='no frames'; return; }
+  const rec = { frames:cap.frames, stats:statsOf(cap.frames), at:Date.now() };
+  if (cap.which === 'A') S.capA = rec; else S.capB = rec;
+  $('kv'+cap.which).textContent = `${cap.frames.length} frames`;
+  log(`Capture ${cap.which} complete: ${cap.frames.length} frames.`);
+  if (S.capA && S.capB){
+    $('deltaCard').classList.remove('hidden');
+    $('btnExportCmp').disabled = false;
+    renderFingerprint();
+    redrawStatic();
+  }
+  renderVerdict();
+}
+
+function deltaData(){
+  const A = S.capA.stats, B = S.capB.stats;
+  const delta = new Float32Array(NCH), sig = new Array(NCH).fill(false);
+  let absMax = 0;
+  const ranked = [];
+  for (let c=0;c<NCH;c++){
+    delta[c] = B.mean[c] - A.mean[c];
+    // Significance: beat both a floor (frame noise) and 2 sigma of the two
+    // captures combined, so a channel that was merely jittery does not qualify.
+    const se = Math.sqrt(A.sd[c]**2/Math.max(1,A.n) + B.sd[c]**2/Math.max(1,B.n));
+    sig[c] = Math.abs(delta[c]) > Math.max(6, 2*se);
+    absMax = Math.max(absMax, Math.abs(delta[c]));
+    ranked.push({ ch:c, delta:delta[c], sig:sig[c], se });
+  }
+  ranked.sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta));
+  return { delta, sig, absMax, ranked:ranked.filter(r=>r.sig) };
+}
+
+function renderFingerprint(){
+  const d = deltaData();
+  $('deltaSub').textContent =
+    `B (${S.capB.stats.n} frames) minus A (${S.capA.stats.n} frames)`;
+  const box = $('fingerprint');
+  const up = d.ranked.filter(r=>r.delta>0).slice(0,8);
+  if (!up.length){
+    box.innerHTML = `<hr class="sep"><div class="empty">No channel changed significantly. `
+      + `Either the device is not radiating in 2.4 GHz, it is off-band, it is too far from `
+      + `the scanner, or it only transmits in bursts - try a longer capture, or move the `
+      + `scanner within a metre of the device.</div>`;
+    return;
+  }
+  let html = `<hr class="sep"><h3>Device fingerprint</h3>`
+    + `<div class="empty" style="padding-top:0">Channels that got significantly louder `
+    + `when the device was switched on:</div>`;
+  for (const r of up){
+    const b = bandsAt(r.ch);
+    html += `<div class="kv"><span>ch ${r.ch} &middot; ${MHZ(r.ch)} MHz</span>`
+         +  `<b class="num" style="color:var(--diverge-pos)">+${r.delta.toFixed(0)}%</b></div>`
+         +  (b.length?`<div style="font-size:11px;opacity:.9;margin:-2px 0 5px">collides with ${b.join(' &middot; ')}</div>`:'');
+  }
+  // Characterise the shape from where the ENERGY sits, not from the outermost
+  // channels: a single marginal outlier must not turn an obvious narrowband
+  // spike into "scattered". Find the tightest window holding 70% of the change.
+  const byCh = up.slice().sort((a,b)=>a.ch-b.ch);
+  const total = byCh.reduce((s,r)=>s+r.delta, 0);
+  let core = byCh, span = Infinity;
+  for (let i=0;i<byCh.length;i++){
+    let acc = 0;
+    for (let j=i;j<byCh.length;j++){
+      acc += byCh[j].delta;
+      if (acc >= total*0.7){
+        const wdt = byCh[j].ch - byCh[i].ch + 1;
+        if (wdt < span){ span = wdt; core = byCh.slice(i,j+1); }
+        break;
+      }
+    }
+  }
+  const strays = byCh.length - core.length;
+  const tail = strays
+    ? ` ${strays} weaker channel${strays===1?'':'s'} outside that block carr${strays===1?'ies':'y'} the remainder.`
+    : '';
+  let read;
+  if (span <= 4)
+    read = `70% of the new energy sits in a ${span}-channel block at `
+         + `${MHZ(core[0].ch)}${core.length>1?'-'+MHZ(core[core.length-1].ch):''} MHz. That is a `
+         + `<b>fixed-frequency proprietary transmitter</b> - typical of cheap RGB/LED `
+         + `controllers, RF remotes and 2.4 GHz dongles. It will chew that exact slice `
+         + `continuously.${tail}`;
+  else if (span >= 15 && core.length >= 8)
+    read = `The new energy forms a ~${span}-channel block at ${MHZ(core[0].ch)}-`
+         + `${MHZ(core[core.length-1].ch)} MHz. That is <b>Wi-Fi shaped</b> - the device most `
+         + `likely joined your network or raised its own access point.${tail}`;
+  else
+    read = `The new energy is spread across ${span} channels in ${core.length} places with no `
+         + `dominant carrier. That is <b>hopping or bursty</b> traffic - Bluetooth/BLE, or a `
+         + `device that only transmits periodically.${tail}`;
+  html += `<div class="note">${read}</div>`;
+  box.innerHTML = html;
+}
+
+/* ================================================================== table */
+function renderTable(){
+  const rows = [];
+  for (let c=0;c<NCH;c++){
+    rows.push(`<tr><td>${c}</td><td class="num">${MHZ(c)}</td>`
+      + `<td class="num">${(S.live?S.live.pct[c]:0).toFixed(0)}</td>`
+      + `<td class="num">${S.avg[c].toFixed(1)}</td>`
+      + `<td class="num">${S.peak[c].toFixed(0)}</td>`
+      + `<td style="text-align:left">${bandsAt(c).join(', ')||'—'}</td></tr>`);
+  }
+  $('tblBody').innerHTML = rows.join('');
+}
+
+/* ================================================================= export */
+function download(name, text, mime){
+  const blob = new Blob([text], { type: mime || 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 0);
+}
+const stamp = () => new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+
+function exportJson(){
+  const src = S.recFrames.length ? S.recFrames : S.frames;
+  const payload = {
+    tool:'rf24scan', version:1, firmware:S.fw,
+    exported: new Date().toISOString(),
+    demo: S.demo,
+    channels: { min:0, max:125, mhz:'2400 + channel' },
+    settings: { passes:+$('rngPasses').value, dwell:+$('rngDwell').value, rate:$('selRate').value },
+    captureA: S.capA ? { at:S.capA.at, frames:S.capA.frames.map(serialiseFrame) } : null,
+    captureB: S.capB ? { at:S.capB.at, frames:S.capB.frames.map(serialiseFrame) } : null,
+    frames: src.map(serialiseFrame),
+  };
+  download(`rf24scan-${stamp()}.json`, JSON.stringify(payload), 'application/json');
+}
+const serialiseFrame = f => ({ seq:f.seq, t:f.t, ms:f.ms, passes:f.passes,
+  pct: Array.from(f.pct, v=>+v.toFixed(1)) });
+
+function exportSummaryCsv(){
+  const src = S.recFrames.length ? S.recFrames : S.frames;
+  const st = statsOf(src);
+  let csv = 'channel,mhz,mean_pct,max_pct,stdev_pct,frames,bands\n';
+  for (let c=0;c<NCH;c++)
+    csv += `${c},${MHZ(c)},${st.mean[c].toFixed(2)},${st.max[c].toFixed(2)},`
+        +  `${st.sd[c].toFixed(2)},${st.n},"${bandsAt(c).join('; ')}"\n`;
+  download(`rf24scan-summary-${stamp()}.csv`, csv, 'text/csv');
+}
+
+function exportWaterfallCsv(){
+  const src = S.recFrames.length ? S.recFrames : S.frames;
+  let csv = 'iso_time,seq,sweep_ms,' + Array.from({length:NCH},(_,c)=>'ch'+c).join(',') + '\n';
+  for (const f of src)
+    csv += `${new Date(f.t).toISOString()},${f.seq},${f.ms},`
+        +  Array.from(f.pct, v=>v.toFixed(1)).join(',') + '\n';
+  download(`rf24scan-waterfall-${stamp()}.csv`, csv, 'text/csv');
+}
+
+function exportComparison(){
+  const d = deltaData();
+  let csv = 'channel,mhz,baseline_A_pct,test_B_pct,delta_pct,significant,bands\n';
+  for (let c=0;c<NCH;c++)
+    csv += `${c},${MHZ(c)},${S.capA.stats.mean[c].toFixed(2)},${S.capB.stats.mean[c].toFixed(2)},`
+        +  `${d.delta[c].toFixed(2)},${d.sig[c]?'yes':'no'},"${bandsAt(c).join('; ')}"\n`;
+  download(`rf24scan-compare-${stamp()}.csv`, csv, 'text/csv');
+}
+
+function exportPng(){
+  // Compose waterfall + axis + lanes into one image so the export is readable
+  // standalone rather than a bare pixel block.
+  const a=$('wf'), b=$('wfAxis'), c=$('bandLanes');
+  const out = document.createElement('canvas');
+  out.width = a.width;
+  out.height = a.height + b.height + c.height;
+  const x = out.getContext('2d');
+  x.fillStyle = '#1a1a19'; x.fillRect(0,0,out.width,out.height);
+  x.drawImage(a,0,0);
+  x.drawImage(b,0,a.height);
+  x.drawImage(c,0,a.height+b.height);
+  out.toBlob(blob=>{
+    const url = URL.createObjectURL(blob);
+    const el = document.createElement('a');
+    el.href=url; el.download=`rf24scan-waterfall-${stamp()}.png`;
+    document.body.appendChild(el); el.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); el.remove(); },0);
+  });
+}
+
+function loadSession(file){
+  const fr = new FileReader();
+  fr.onload = () => {
+    try{
+      const j = JSON.parse(fr.result);
+      if (j.tool !== 'rf24scan') throw new Error('not an rf24scan session file');
+      const rehydrate = arr => (arr||[]).map(o=>({
+        seq:o.seq, t:o.t, ms:o.ms, passes:o.passes, lo:0, hi:125,
+        pct: Float32Array.from(o.pct),
+      }));
+      S.frames = rehydrate(j.frames);
+      S.recFrames = [];
+      S.capA = j.captureA ? (()=>{ const f=rehydrate(j.captureA.frames); return {frames:f, stats:statsOf(f), at:j.captureA.at}; })() : null;
+      S.capB = j.captureB ? (()=>{ const f=rehydrate(j.captureB.frames); return {frames:f, stats:statsOf(f), at:j.captureB.at}; })() : null;
+      S.avg.fill(0); S.peak.fill(0); S.avgInit=false;
+      for (const f of S.frames){
+        for (let i=0;i<NCH;i++){
+          S.avg[i] += (f.pct[i]-S.avg[i]) * (S.avgInit?0.12:1);
+          if (f.pct[i]>S.peak[i]) S.peak[i]=f.pct[i];
+        }
+        S.avgInit = true;
+        pushWaterfallRow(f.pct);
+      }
+      S.live = S.frames[S.frames.length-1] || null;
+      $('kvA').textContent = S.capA ? `${S.capA.stats.n} frames` : 'not captured';
+      $('kvB').textContent = S.capB ? `${S.capB.stats.n} frames` : 'not captured';
+      if (S.capA && S.capB){
+        $('deltaCard').classList.remove('hidden');
+        $('btnExportCmp').disabled = false;
+        renderFingerprint();
+      }
+      $('statFrames').textContent = S.frames.length;
+      enableExports();
+      redrawStatic(); renderVerdict();
+      log(`Loaded session: ${S.frames.length} frames.`);
+    }catch(e){ alert('Could not load session: ' + e.message); }
+  };
+  fr.readAsText(file);
+}
+
+function enableExports(){
+  const any = S.frames.length > 0;
+  for (const id of ['btnExpJson','btnExpCsv','btnExpWf']) $(id).disabled = !any;
+}
+setInterval(enableExports, 1000);
+
+/* ============================================================== demo mode */
+/* Synthesises a plausible room so the whole UI can be exercised - and verified
+   - with no hardware attached. Deliberately obvious in the status pill.      */
+let demoTimer = null, demoPhase = 0, demoDeviceOn = true;
+function synthFrame(){
+  const passes = +$('rngPasses').value;
+  const pct = new Float32Array(NCH);
+  demoPhase += 0.1;
+  for (let c=0;c<NCH;c++){
+    let v = c>=84 ? 1.5 : 4;                            // floor; above ISM is quieter
+    if (c>=27 && c<=47) v += 46 * Math.exp(-((c-37)**2)/210);   // Wi-Fi ch 6 plateau
+    if (c>=52 && c<=72) v += 17 * Math.exp(-((c-62)**2)/210);   // weaker Wi-Fi ch 11
+    if (c>=2 && c<=80 && Math.random()<0.1) v += 30;            // BT hopping speckle
+    for (const a of [2,26,80]) if (Math.abs(c-a)<=1) v += 14;   // BLE advertising
+    if (demoDeviceOn && Math.abs(c-41)<=1)                      // the "FancyLEDs box"
+      v += 62 * (Math.abs(c-41)===0?1:0.55) * (0.85+0.15*Math.sin(demoPhase));
+    v += (Math.random()-0.5)*7;
+    pct[c] = clamp(v,0,100);
+  }
+  // Quantise back through the wire format so demo data has the same coarse
+  // resolution the real firmware produces - no falsely smooth demo.
+  for (let c=0;c<NCH;c++) pct[c] = Math.round(pct[c]/100*passes)/passes*100;
+  return { seq:++demoPhaseSeq, passes, dwell:+$('rngDwell').value,
+           ms:Math.round(passes*126*(+$('rngDwell').value+130)/1000),
+           lo:0, hi:125, pct, t:Date.now() };
+}
+let demoPhaseSeq = 0;
+function toggleDemo(){
+  if (demoTimer){
+    clearInterval(demoTimer); demoTimer=null; S.demo=false;
+    $('btnDemo').textContent='Demo signal';
+    setStatus(S.connected?'Scanning':'Disconnected', S.connected?'on':'');
+    return;
+  }
+  if (S.connected){ alert('Disconnect the Pico first - demo mode replaces live data.'); return; }
+  S.demo = true; S.fw = 'demo';
+  $('kvFw').textContent = 'demo';
+  $('btnDemo').textContent = 'Stop demo';
+  setStatus('Demo signal (synthetic)','demo');
+  log('Demo mode: synthetic room with a Wi-Fi ch 6 AP, BLE beacons, Bluetooth hopping, '
+    + 'and a narrowband emitter at 2441 MHz. Use Compare mode to fingerprint it.');
+  demoTimer = setInterval(()=>{ if (!S.paused) onFrame(synthFrame()); }, 320);
+}
+
+/* ================================================================== wiring */
+$('btnConnect').onclick = () => S.connected ? disconnect() : connect();
+$('btnDemo').onclick    = toggleDemo;
+
+$('btnPause').onclick = () => {
+  S.paused = !S.paused;
+  $('btnPause').textContent = S.paused ? 'Resume' : 'Pause';
+  if (S.connected) send(S.paused ? 'H' : 'G');
+  setStatus(S.paused ? 'Paused' : (S.demo?'Demo signal (synthetic)':'Scanning'),
+            S.paused ? 'warn' : (S.demo?'demo':'on'));
+};
+$('btnPing').onclick = () => { send('T'); send('?'); };
+
+$('rngPasses').oninput = e => { $('lblPasses').textContent = e.target.value; };
+$('rngPasses').onchange = e => send('P'+e.target.value);
+$('rngDwell').oninput   = e => { $('lblDwell').textContent = e.target.value + ' µs'; };
+$('rngDwell').onchange  = e => send('D'+e.target.value);
+$('selRate').onchange   = e => send('B'+e.target.value);
+$('rngCapLen').oninput  = e => { $('lblCapLen').textContent = e.target.value + ' s'; };
+
+$('btnPeakReset').onclick = () => { S.peak.fill(0); dirty = true; };
+$('btnTable').onclick = () => {
+  const t = $('tableView');
+  t.classList.toggle('hidden');
+  $('btnTable').textContent = t.classList.contains('hidden') ? 'Table view' : 'Hide table';
+  dirty = true;
+};
+
+$('selPalette').onchange = e => {
+  LUT = buildLUT(e.target.value === 'inferno' ? RAMP_INFERNO : RAMP_BLUE);
+  repaintWaterfallFromRows();
+  paintColorbar();
+  dirty = true;
+};
+
+$('btnCapA').onclick = () => startCapture('A');
+$('btnCapB').onclick = () => startCapture('B');
+$('btnClearCap').onclick = () => {
+  S.capA = S.capB = null; S.capturing = null;
+  $('kvA').textContent = $('kvB').textContent = 'not captured';
+  $('deltaCard').classList.add('hidden');
+  $('btnExportCmp').disabled = true;
+  $('btnCapA').disabled = $('btnCapB').disabled = false;
+  renderVerdict();
+};
+
+$('btnRec').onclick = () => {
+  S.recording = !S.recording;
+  if (S.recording){ S.recFrames = []; S.recStart = Date.now(); }
+  $('btnRec').textContent = S.recording ? 'Stop recording' : 'Start recording';
+  $('btnRec').classList.toggle('danger', S.recording);
+  log(S.recording ? 'Recording started.' : `Recording stopped: ${S.recFrames.length} frames.`);
+};
+
+$('btnExpJson').onclick = exportJson;
+$('btnExpCsv').onclick  = exportSummaryCsv;
+$('btnExpWf').onclick   = exportWaterfallCsv;
+$('btnExportCmp').onclick = exportComparison;
+$('btnExpPng').onclick  = exportPng;
+$('btnLoad').onclick    = () => $('fileLoad').click();
+$('fileLoad').onchange  = e => { if (e.target.files[0]) loadSession(e.target.files[0]); e.target.value=''; };
+
+/* ------------------------------------------------------------------ hover */
+function wireHover(plotId, canvasId, tipId, setter){
+  const plot = $(plotId), cv = $(canvasId), tip = $(tipId);
+  plot.addEventListener('mousemove', ev => {
+    const r = cv.getBoundingClientRect();
+    const x = ev.clientX - r.left;
+    const pw = plotW(r.width);
+    const ch = Math.floor((x - PAD_L)/pw*NCH);
+    if (ch < 0 || ch >= NCH){ tip.classList.remove('show'); setter(null); dirty=true; return; }
+    setter(ch);
+    tip.innerHTML = tipHtml(ch, plotId);
+    const pr = plot.getBoundingClientRect();
+    let tx = ev.clientX - pr.left + 14;
+    if (tx + 240 > pr.width) tx = ev.clientX - pr.left - 250;
+    tip.style.left = Math.max(2, tx) + 'px';
+    tip.style.top  = Math.max(2, ev.clientY - pr.top + 12) + 'px';
+    tip.classList.add('show');
+    dirty = true;
+  });
+  plot.addEventListener('mouseleave', () => { tip.classList.remove('show'); setter(null); dirty=true; });
+}
+function tipHtml(ch, which){
+  const b = bandsAt(ch);
+  let h = `<b>Channel ${ch} &middot; ${MHZ(ch)} MHz</b>`;
+  if (which === 'deltaPlot' && S.capA && S.capB){
+    const d = deltaData();
+    h += `<div class="row"><span>Baseline A</span><span class="num">${S.capA.stats.mean[ch].toFixed(1)}%</span></div>`
+      +  `<div class="row"><span>Test B</span><span class="num">${S.capB.stats.mean[ch].toFixed(1)}%</span></div>`
+      +  `<div class="row"><span>Change</span><span class="num">${d.delta[ch]>0?'+':''}${d.delta[ch].toFixed(1)}%</span></div>`
+      +  `<div class="row"><span>Significant</span><span>${d.sig[ch]?'yes':'no'}</span></div>`;
+  } else {
+    h += `<div class="row"><span>Live</span><span class="num">${(S.live?S.live.pct[ch]:0).toFixed(0)}%</span></div>`
+      +  `<div class="row"><span>Average</span><span class="num">${S.avg[ch].toFixed(1)}%</span></div>`
+      +  `<div class="row"><span>Peak</span><span class="num">${S.peak[ch].toFixed(0)}%</span></div>`;
+  }
+  if (b.length) h += `<div style="margin-top:4px;opacity:.95">${b.join('<br>')}</div>`;
+  else h += `<div style="margin-top:4px;opacity:.95">no standard protocol here</div>`;
+  return h;
+}
+wireHover('wfPlot','wf','wfTip', v=>hoverCh=v);
+wireHover('barPlot','bars','barTip', v=>hoverCh=v);
+wireHover('deltaPlot','delta','deltaTip', v=>hoverChD=v);
+
+/* --------------------------------------------------------------- colorbar */
+function paintColorbar(){
+  const stops = [];
+  for (let i=0;i<=10;i++){
+    const k = Math.round(i/10*255)*3;
+    stops.push(`rgb(${LUT[k]},${LUT[k+1]},${LUT[k+2]}) ${i*10}%`);
+  }
+  $('cbStrip').style.background = `linear-gradient(90deg, ${stops.join(',')})`;
+}
+
+/* ------------------------------------------------------------------- boot */
+if (!('serial' in navigator)){
+  setStatus('Web Serial unavailable','warn');
+  log('Web Serial API not detected. Chrome, Edge or Opera on desktop is required for '
+    + 'live capture. Demo mode, session loading and every chart still work here.');
+}
+paintColorbar();
+redrawStatic();
+renderVerdict();
+frameLoop();
+log('Ready. Connect the Pico, or press "Demo signal" to explore the tool with synthetic data.');
+</script>
+</body>
+</html>

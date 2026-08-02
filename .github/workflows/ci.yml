@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # MicroPython-only syntax (@micropython.native, machine, etc.) parses fine
+      # under CPython's ast, which is all we can check without a board.
+      - name: Firmware parses
+        run: |
+          python - <<'PY'
+          import ast, pathlib
+          src = pathlib.Path('firmware/main.py').read_text(encoding='utf-8')
+          ast.parse(src)
+          print(f"firmware/main.py OK - {len(src.splitlines())} lines")
+          PY
+
+      - name: Firmware declares a VERSION
+        run: |
+          python - <<'PY'
+          import re, pathlib, sys
+          src = pathlib.Path('firmware/main.py').read_text(encoding='utf-8')
+          m = re.search(r'^VERSION\s*=\s*"([^"]+)"', src, re.M)
+          if not m:
+              sys.exit('::error::firmware/main.py has no top-level VERSION = "x.y.z"')
+          print(f'VERSION = {m.group(1)}')
+          PY
+
+      - name: Firmware is receive-only
+        run: |
+          python - <<'PY'
+          import re, pathlib, sys
+          src = pathlib.Path('firmware/main.py').read_text(encoding='utf-8')
+          # Strip comments and docstrings so the safety notes don't trip this.
+          code = re.sub(r'#.*', '', src)
+          code = re.sub(r'""".*?"""', '', code, flags=re.S)
+          banned = {
+              'W_TX_PAYLOAD': r'\bW_TX_PAYLOAD\b',
+              'RF_SETUP CONT_WAVE': r'\bCONT_WAVE\b',
+              'PRIM_RX cleared': r'PRIM_RX\s*=\s*0',
+          }
+          bad = [n for n, p in banned.items() if re.search(p, code)]
+          if bad:
+              sys.exit(f'::error::firmware must stay receive-only, found: {bad}')
+          print('receive-only OK - no transmit paths')
+          PY
+
+      - name: Python tooling compiles
+        run: python -m py_compile web/serve.py tools/check_ids.py tools/check_selfcontained.py
+
+      # Guards the exact bug that bit this project: $('typo') aborts the whole
+      # top-level script body and silently kills every later feature.
+      - name: Element id references resolve
+        run: python tools/check_ids.py web/index.html
+
+      - name: Web tool is self-contained
+        run: python tools/check_selfcontained.py web/index.html
