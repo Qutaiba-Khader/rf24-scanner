@@ -32,6 +32,7 @@ nRF24L01+PA+LNA ──SPI0──► Pico ──USB serial──► Chrome ──
 | `SETUP.md` | Wiring, flashing, running, troubleshooting. |
 | `INTERPRETING.md` | What the numbers mean and how to fix what you find. |
 | `FINDINGS.md` | **The results, every bug found, and what still needs fixing.** |
+| `DIAGNOSIS.md` | **Why the earbuds drop out** — the band, who owns it, and why only gaming mode and Auracast fail. |
 
 ## Quick start
 
@@ -98,8 +99,15 @@ Firmware **v1.1.1** runs on a real RP2040 Pico, radio reports `radio=ok`,
 
 Together the first two take **17 of the 79 channels** Bluetooth hops through.
 
+⚠️ **Attribution revised the same day.** That band is a permanent access-point
+beacon centred on **2422 MHz = Wi-Fi channel 3** — present in all 12 captures,
+including ones with every listed device switched off. The FancyLEDs box and the
+Xbox are *clients on it*, not its owner, and the owner is still unidentified. The
+user's own router is on channel 11 and never appears in the data at all.
+
 Full write-up, every bug found, and what still needs doing:
-**[FINDINGS.md](FINDINGS.md)**.
+**[FINDINGS.md](FINDINGS.md)** · why only gaming mode and Auracast fail:
+**[DIAGNOSIS.md](DIAGNOSIS.md)**.
 
 **Still untested against real hardware: the browser tool.** Every capture above
 was taken with `tools/scan.py`; the web UI has only ever seen synthetic data.

@@ -7,6 +7,10 @@ real measurements, and identified the interferers.
 
 ## 1. The results
 
+> **Revised later the same day.** The block below is **not owned** by the devices
+> that were power-cycled — see §1a. They contribute to it; something else owns
+> it. Full interpretation in [`DIAGNOSIS.md`](DIAGNOSIS.md).
+
 ### Devices identified — by switching each one off and on while scanning
 
 | Device | Frequency band | nRF ch | Width | Wi-Fi ch | Steals | Adds | Confidence | Trials |
@@ -18,6 +22,74 @@ real measurements, and identified the interferers.
 
 The Xbox figure is an average of two trials that differed 5×: **+30 when in use,
 +6 when idle**. That variability matches dropouts that come and go.
+
+### 1a. Correction — those two are contributors, not the owner
+
+The confidence numbers above are correct: switching each device did move that
+band, repeatably. What was wrong was the conclusion drawn from it.
+
+The block **never goes away**. Every power-cycle changed its *level* and never
+its centre frequency:
+
+| Capture | State | 2415–2429 | Centre |
+|---|---|---|---|
+| `07` | FancyLEDs **off** | 37–40% | 2422 |
+| `06` | FancyLEDs **on** | 56–58% | 2422 |
+| `09` | Xbox **off** | 21% | 2422 |
+| `10` | Xbox **on** | 27% | 2422 |
+| `12` | buds + TX **off** | 39% | 2422 |
+
+Flat top, ~20 MHz occupied, always on, centre pinned at **2422 MHz = Wi-Fi
+channel 3**. That is an access-point beacon, and the two devices are clients on
+it.
+
+**It is not the user's router.** The router runs **channel 11, 20 MHz, TX power
+Low**, unchanged before, during and after every capture. Channel 11 = 2452–2472
+MHz measured **0.5% avg / 2.7% peak** — the router is below the −64 dBm floor and
+never appears in the data at all. Those settings are correct; leave them.
+
+**Owner still unidentified.** Candidates, untested: a second router / ISP
+modem-router / mesh node / extender, the Android TV box or TV raising a Wi-Fi
+Direct or Cast group, or a neighbour.
+
+### 1b. The range that matters
+
+| Range | Occupancy | |
+|---|---|---|
+| 2400–2414 MHz | < 1.5% | clean |
+| **2415–2429 MHz** | **21 – 41%** | **the problem** |
+| 2430–2483 MHz | < 3% | clean |
+| 2432–2456 MHz | < 1% | quietest stretch in the room |
+
+| Path | Lost inside 2415–2429 |
+|---|---|
+| Classic A2DP (normal music) | BT ch 13–27 → **15 of 79 (19%)** |
+| LE Audio — LC3, gaming, Auracast | data ch 6–11 → **6 of 37 (16%)** |
+| both | **plus advertising channel 38** |
+
+**Worst single channel: 2426 MHz at 41.1%** — the highest reading in the whole
+scan, and it is **BLE advertising channel 38**. Losing a data channel costs a
+packet; losing an advertising channel costs the reconnection. That is why the
+symptom is "it drops and takes a while to come back".
+
+### 1c. Why it only fails in gaming mode and Auracast
+
+The user's decisive clue: **normal music is fine, only gaming mode and Auracast
+break.** Same room, same interference. So the variable is *margin*, not level.
+
+| Protection | Normal A2DP | Gaming mode | Auracast (BIS) |
+|---|---|---|---|
+| Buffer | 150–200 ms | shrunk for 15–25 ms | tiny |
+| Retransmission | acknowledged, retry till it lands | acknowledged, no time to fit one | **none — no acknowledgement** |
+| AFH | buds report bad channels back | same | **no feedback path exists** |
+
+Broadcast has no return channel, so retransmission is a **fixed pre-scheduled
+repeat count (RTN)** decided by the transmitter alone. Bluetooth's Broadcast
+Audio Profile defines two configuration tables — **Low Latency** and **High
+Reliability** — differing by RTN and max transport latency, and low-latency
+dongles default to the former. That is the likeliest reason **7 different
+transmitters all failed identically**, and it does not require the earbuds to be
+at fault: the Buds 3 Pro support LC3, LE Audio and Auracast correctly.
 
 ### The picture
 
@@ -161,12 +233,22 @@ Everything below was learned on the CLI and has **not** been ported:
 
 ## 6. Next measurement
 
-Identify the remaining **21% at 2417–2428 MHz**. Suspects in order:
+**Priority 1 — the clean-room test.** Buds + FMA121 under 1 m, in a place where
+the band is clean, in gaming mode and Auracast. This is not a capture; it is a
+physical A/B. It decides whether the room matters at all, and the scanner cannot
+answer it (see the −64 dBm limit in `DIAGNOSIS.md` §7).
 
-1. Android TV box (Wi-Fi)
-2. The TV itself (Wi-Fi)
-3. Router / a neighbour's Wi-Fi on channel 1
+**Priority 2 — identify the access point on channel 3** that owns 2415–2429 MHz.
+Check the router's *Nearby Networks / Site Survey* page or a phone WiFi analyzer
+first; anything on channel 1–3 is the suspect. Then confirm with a capture pair:
+
+1. A second router / ISP modem-router / mesh node / extender
+2. Android TV box or the TV (Wi-Fi Direct / Cast group)
+3. A neighbour's access point
 4. soundcore Liberty 4 NC (paired to this PC, never tested)
+
+**Priority 3 — the mouse dongle.** It is the second victim in the original brief
+and has never had a capture pair of its own. Its frequency is still unknown.
 
 ```
 python tools\scan.py --port COM19 --seconds 60 --label "Android box OFF"
