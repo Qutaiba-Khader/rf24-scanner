@@ -48,7 +48,18 @@ COMPANY = {
 
 
 def norm(mac):
+    """Accepts a 6-byte MAC or an 8-byte Zigbee EUI-64.
+
+    Zigbee devices identify by EUI-64, which is 16 hex digits rather than 12.
+    Rejecting those would have excluded exactly the devices that turned out to
+    matter here - a Zigbee radio is invisible to both a Wi-Fi and a BLE scan, so
+    its address is the ONLY handle there is on it.
+    """
     return mac.replace(":", "").replace("-", "").lower()
+
+
+def valid(mac):
+    return len(mac) in (12, 16) and all(c in "0123456789abcdef" for c in mac)
 
 
 def load():
@@ -68,7 +79,7 @@ def save(db):
 def from_ha(entry, db):
     """One Home Assistant bluetooth advertisement -> one named device."""
     mac = norm(entry.get("address", ""))
-    if len(mac) != 12:
+    if not valid(mac):
         return None
     md = entry.get("manufacturer_data") or {}
     vendors = []
@@ -116,8 +127,8 @@ def main():
 
     if args.add:
         mac = norm(args.add[0])
-        if len(mac) != 12:
-            sys.exit("MAC must be 12 hex digits")
+        if not valid(mac):
+            sys.exit("address must be 12 hex digits (MAC) or 16 (Zigbee EUI-64)")
         db[mac] = {"name": args.add[1], "source": "manual"}
         if args.note:
             db[mac]["vendor"] = args.note
@@ -130,7 +141,7 @@ def main():
         return
     print(f"{len(db)} known device(s):\n")
     for mac, rec in sorted(db.items(), key=lambda x: x[1].get("name", "")):
-        pretty = ":".join(mac[i:i + 2] for i in range(0, 12, 2))
+        pretty = ":".join(mac[i:i + 2] for i in range(0, len(mac), 2))
         print(f"  {pretty}  {rec.get('name','(no name)'):<26}"
               f"{rec.get('vendor','')}  [{rec.get('source','')}]")
 
