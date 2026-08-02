@@ -196,6 +196,129 @@ tbody tr:nth-child(even){background:rgba(255,255,255,.028)}
   font-size:11.5px;line-height:1.55;white-space:pre-wrap;word-break:break-all;
 }
 
+/* ===========================================================================
+   Plain-language layer. The instrument (waterfall, bars, knobs) is evidence;
+   it is not the point. The point is "which device is doing this to me", so
+   that answer gets the top of the page and everything else demotes below it.
+
+   Type: system sans, heavy and tight, for anything a person reads as a
+   sentence; monospace, uppercase and wide-tracked for anything that is a
+   reading off an instrument. That tension is the page's voice - it matches
+   how real radio gear is labelled, and it keeps data from being mistaken for
+   prose.
+   ========================================================================= */
+.lab{
+  font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  font-size:10px;text-transform:uppercase;letter-spacing:.15em;
+  opacity:.9;display:block;
+}
+
+/* ------------------------------------------------------------ answer band */
+.answer{
+  margin:14px 14px 0;padding:0;
+  background:#212120;border:1px solid var(--border-strong);border-radius:var(--r);
+  display:flex;align-items:stretch;overflow:hidden;
+}
+.answer .accent{width:5px;flex:none;background:var(--axis);transition:background .3s}
+.answer.good     .accent{background:var(--good)}
+.answer.warning  .accent{background:var(--warning)}
+.answer.serious  .accent{background:var(--serious)}
+.answer.critical .accent{background:var(--critical)}
+.answer .body{padding:16px 20px;display:flex;gap:26px;align-items:center;flex-wrap:wrap;flex:1}
+.answer .headline{min-width:0;flex:1 1 340px}
+.answer .state{
+  font-size:clamp(24px,3.2vw,36px);font-weight:800;letter-spacing:-.02em;
+  line-height:1.1;margin:5px 0 0;
+}
+.answer .say{font-size:14px;line-height:1.5;margin:7px 0 0;max-width:62ch}
+.answer .act{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+@media (max-width:760px){ .answer .body{gap:16px} }
+
+/* ------------------------------------------ signature: who's on the air */
+.airmap{margin:14px 14px 0;padding:14px 16px 16px}
+/* Blocks keep their TRUE width - a map that widens a block to fit its caption
+   is lying about how much spectrum the device occupies, which is the one thing
+   this graphic exists to show. Labels live in their own band above instead. */
+.airmap .strip{
+  position:relative;height:112px;margin-top:11px;border-radius:8px;
+  background:var(--surface-2);border:1px solid var(--border);overflow:hidden;
+}
+.airmap .occ{
+  position:absolute;height:34px;border-radius:4px;min-width:2px;
+  border:1px solid rgba(0,0,0,.4);transition:left .4s,width .4s;
+}
+.airmap .occLabel{
+  position:absolute;transform:translateX(-50%);text-align:center;
+  white-space:nowrap;pointer-events:none;
+}
+.airmap .occLabel b{display:block;font-size:11.5px;font-weight:700;line-height:1.25}
+.airmap .occLabel em{
+  display:block;font-style:normal;font-size:9.5px;opacity:.92;
+  font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+.airmap .occLabel i{
+  display:block;width:1px;margin:3px auto 0;background:currentColor;opacity:.55;
+}
+/* Hopping traffic has no fixed home, so it reads as a wash across the band
+   rather than a block with edges - the shape itself carries the meaning. */
+.airmap .hop{
+  position:absolute;border-radius:4px;pointer-events:none;
+  background:repeating-linear-gradient(115deg,rgba(217,89,38,.30) 0 5px,transparent 5px 11px);
+  border:1px dashed rgba(217,89,38,.55);
+}
+.airmap .ticks{position:absolute;left:0;right:0;bottom:0;height:18px}
+.airmap .ticks i{
+  position:absolute;bottom:2px;font-style:normal;font-size:9.5px;
+  transform:translateX(-50%);white-space:nowrap;opacity:.9;
+  font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+.airmap .none{
+  position:absolute;inset:0 0 18px;display:grid;place-items:center;
+  font-size:13px;opacity:.85;text-align:center;padding:0 16px;
+}
+
+/* ------------------------------------------------------------- hunt steps */
+.hunt{margin:14px 14px 0;padding:14px 16px 16px}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:12px}
+@media (max-width:880px){ .steps{grid-template-columns:1fr} }
+.step{
+  border:1px solid var(--border);border-radius:9px;padding:12px 13px 13px;
+  background:var(--surface-2);display:flex;flex-direction:column;gap:7px;
+  transition:border-color .2s,background .2s;
+}
+.step.active{border-color:var(--series-1);background:#1b2430}
+.step.done{border-color:var(--good)}
+.step .n{
+  font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  font-size:11px;letter-spacing:.1em;opacity:.95;
+}
+.step.done .n::after{content:'  DONE';color:var(--good);font-weight:700}
+.step h3{font-size:14px}
+.step p{margin:0;font-size:12.5px;line-height:1.5;opacity:.96}
+.step .btn{align-self:flex-start;margin-top:auto}
+
+/* ---------------------------------------------------------------- details */
+details.fold{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r);overflow:hidden;
+}
+details.fold > summary{
+  padding:12px 14px;cursor:pointer;user-select:none;
+  display:flex;align-items:center;gap:9px;list-style:none;
+}
+details.fold > summary::-webkit-details-marker{display:none}
+details.fold > summary::before{
+  content:'';width:0;height:0;flex:none;
+  border-left:5px solid currentColor;border-top:4px solid transparent;
+  border-bottom:4px solid transparent;transition:transform .18s;opacity:.85;
+}
+details.fold[open] > summary::before{transform:rotate(90deg)}
+details.fold > summary h2{font-size:13px}
+details.fold > summary .why{font-size:12px;opacity:.9;font-weight:400;margin-left:auto}
+details.fold .inner{padding:0 14px 14px}
+
+.caption{font-size:12px;line-height:1.5;opacity:.96;margin:0 0 9px}
+
 .hidden{display:none !important}
 
 /* -------------------------------------------------------------------- foot */
@@ -243,6 +366,87 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
   <button class="btn hidden" id="btnDemo">Demo signal</button>
 </header>
 
+<!-- The answer, before any instrument. Someone who has never seen a spectrum
+     analyser should be able to read this line and know what to do next. -->
+<section class="answer" id="answerBand">
+  <div class="accent"></div>
+  <div class="body">
+    <div class="headline">
+      <span class="lab">Right now</span>
+      <p class="state" id="ansState">Not connected</p>
+      <p class="say" id="ansSay">Plug in the Pico and click Connect. Nothing is being measured yet.</p>
+    </div>
+    <div class="act" id="ansAct"></div>
+  </div>
+</section>
+
+<!-- Signature element: the spectrum redrawn as a map of OCCUPANTS rather than
+     a chart of channels. "Wi-Fi router" and "Unknown device" mean something
+     to everyone; "channel 41 at 62% occupancy" does not. -->
+<section class="card airmap">
+  <header>
+    <h2>Who is on the air</h2>
+    <span class="sub">every transmitter near you, and the space it takes up</span>
+  </header>
+  <p class="caption" id="airCaption">
+    Each block is one thing that is transmitting. Wider means it takes more of
+    the airspace your earbuds and mouse need.
+  </p>
+  <div class="strip" id="airStrip">
+    <div class="none" id="airNone">Nothing measured yet</div>
+    <div class="ticks" id="airTicks"></div>
+  </div>
+</section>
+
+<!-- A real sequence, so the numbering carries information rather than decorating. -->
+<section class="card hunt">
+  <header>
+    <h2>Find the culprit</h2>
+    <span class="sub">measure the room twice &mdash; whatever changed is the device</span>
+    <span class="spacer"></span>
+    <button class="btn sm" id="btnClearCap">Start over</button>
+  </header>
+  <p class="caption">
+    Put the scanner within a metre of the device you suspect. <b>Do not move it
+    between the two measurements</b>, or you will measure your own hand.
+  </p>
+
+  <div class="steps">
+    <div class="step" id="step1">
+      <span class="n">STEP 1</span>
+      <h3>Turn the device off</h3>
+      <p>Unplug the thing you suspect, wait a few seconds, then record what the
+         room looks like without it.</p>
+      <button class="btn" id="btnCapA">Record without it</button>
+      <span class="lab" id="kvA">not recorded</span>
+    </div>
+
+    <div class="step" id="step2">
+      <span class="n">STEP 2</span>
+      <h3>Turn it back on</h3>
+      <p>Plug it back in, give it a moment to start up, then record the room
+         again with it running.</p>
+      <button class="btn" id="btnCapB">Record with it on</button>
+      <span class="lab" id="kvB">not recorded</span>
+    </div>
+
+    <div class="step" id="step3">
+      <span class="n">STEP 3</span>
+      <h3>Read the difference</h3>
+      <p id="step3Say">Anything that got louder between the two recordings is
+         coming from that device. Nothing else can explain it.</p>
+      <button class="btn sm" id="btnExportCmp" disabled>Save the result</button>
+    </div>
+  </div>
+
+  <div class="ctl" style="max-width:320px">
+    <label>How long to record each time <b class="num" id="lblCapLen">15 s</b></label>
+    <input type="range" id="rngCapLen" min="5" max="60" step="5" value="15">
+    <div class="hint">Longer is more reliable, especially for a device that
+      only transmits now and then.</div>
+  </div>
+</section>
+
 <main>
   <!-- =================================================== charts column -->
   <div class="col">
@@ -250,14 +454,18 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
     <!-- ------------------------------------------------------ waterfall -->
     <section class="card">
       <header>
-        <h2>Waterfall</h2>
-        <span class="sub">channel occupancy over time &middot; newest at top</span>
+        <h2>Last few minutes</h2>
+        <span class="sub">newest at the top, scrolling down</span>
         <span class="spacer"></span>
         <select id="selPalette" style="width:auto">
           <option value="blue">Blue ramp (default)</option>
           <option value="inferno">Inferno (classic SDR)</option>
         </select>
       </header>
+
+      <p class="caption">Left to right is radio frequency; top to bottom is time.
+        <b>Brighter means busier.</b> A bright vertical stripe that never moves is
+        one device sitting on one frequency &mdash; that is what you are hunting.</p>
 
       <div class="plot" id="wfPlot">
         <canvas id="wf" height="300"></canvas>
@@ -274,8 +482,8 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
     <!-- ------------------------------------------------------ bar chart -->
     <section class="card">
       <header>
-        <h2>Current sweep</h2>
-        <span class="sub">probability a carrier &gt; &minus;64 dBm was present</span>
+        <h2>Right now</h2>
+        <span class="sub">how busy each frequency is, this instant</span>
         <span class="spacer"></span>
         <button class="btn sm" id="btnPeakReset">Reset peaks</button>
         <button class="btn sm" id="btnTable">Table view</button>
@@ -306,7 +514,7 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
     <!-- -------------------------------------------------- compare/delta -->
     <section class="card hidden" id="deltaCard">
       <header>
-        <h2>Compare: device fingerprint</h2>
+        <h2>What changed when you switched it on</h2>
         <span class="sub" id="deltaSub"></span>
       </header>
       <div class="plot" id="deltaPlot">
@@ -326,98 +534,80 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
   <!-- =================================================== sidebar column -->
   <div class="col">
 
-    <!-- ------------------------------------------------------ radio ctl -->
-    <section class="card">
-      <header><h2>Radio</h2></header>
+    <!-- --------------------------------------------- scanner (collapsed) -->
+    <details class="fold">
+      <summary><h2>Scanner settings</h2><span class="why">you rarely need these</span></summary>
+      <div class="inner">
+        <div class="row">
+          <button class="btn" id="btnPause">Pause</button>
+          <button class="btn" id="btnPing">Re-check the radio</button>
+        </div>
+        <div class="kv" style="margin-top:11px"><span>Time for one full scan</span><b class="num" id="kvSweep">&ndash;</b></div>
+        <div class="kv"><span>Firmware version</span><b id="kvFw">&ndash;</b></div>
 
-      <div class="ctl">
-        <label>Passes per frame <b class="num" id="lblPasses">8</b></label>
-        <input type="range" id="rngPasses" min="1" max="64" value="8">
-        <div class="hint">Samples per channel per frame. More passes = a steadier
-          probability but a slower waterfall.</div>
-      </div>
+        <hr class="sep">
 
-      <div class="ctl">
-        <label>Dwell <b class="num" id="lblDwell">200 &micro;s</b></label>
-        <input type="range" id="rngDwell" min="40" max="600" step="10" value="200">
-        <div class="hint">RX time per sample. Below ~130&nbsp;&micro;s the PLL has not
-          relocked and readings go unreliable.</div>
-      </div>
+        <div class="ctl">
+          <label>Measurements per channel <b class="num" id="lblPasses">8</b></label>
+          <input type="range" id="rngPasses" min="1" max="64" value="8">
+          <div class="hint">Higher is more reliable but updates more slowly.
+            Raise it if a device only transmits occasionally.</div>
+        </div>
 
-      <div class="ctl">
-        <label for="selRate">RX bandwidth</label>
-        <select id="selRate">
-          <option value="0">250 kbps &mdash; narrowest, sharpest channels</option>
-          <option value="1" selected>1 Mbps &mdash; matches the 1 MHz grid</option>
-          <option value="2">2 Mbps &mdash; widest, most sensitive</option>
-        </select>
-      </div>
+        <div class="ctl">
+          <label>Listening time per measurement <b class="num" id="lblDwell">200 &micro;s</b></label>
+          <input type="range" id="rngDwell" min="40" max="600" step="10" value="200">
+          <div class="hint">Leave this alone. Below about 130&nbsp;&micro;s the radio
+            has not finished retuning and the readings stop meaning anything.</div>
+        </div>
 
-      <div class="row" style="margin-top:12px">
-        <button class="btn" id="btnPause">Pause</button>
-        <button class="btn" id="btnPing">Re-test radio</button>
+        <div class="ctl">
+          <label for="selRate">Channel sharpness</label>
+          <select id="selRate">
+            <option value="0">Sharpest &mdash; best at separating close signals</option>
+            <option value="1" selected>Balanced &mdash; recommended</option>
+            <option value="2">Most sensitive &mdash; catches weak signals, blurs them together</option>
+          </select>
+        </div>
       </div>
-      <div class="kv" style="margin-top:9px"><span>Sweep time</span><b class="num" id="kvSweep">&ndash;</b></div>
-      <div class="kv"><span>Firmware</span><b id="kvFw">&ndash;</b></div>
-    </section>
-
-    <!-- -------------------------------------------------------- compare -->
-    <section class="card">
-      <header><h2>Compare mode</h2></header>
-      <div class="hint" style="font-size:12px;opacity:.95;line-height:1.5">
-        Capture with the suspect device <b>off</b>, then <b>on</b>. Whatever
-        changed is that device.
-      </div>
-
-      <div class="ctl">
-        <label>Capture length <b class="num" id="lblCapLen">15 s</b></label>
-        <input type="range" id="rngCapLen" min="5" max="60" step="5" value="15">
-      </div>
-
-      <div class="row" style="margin-top:11px">
-        <button class="btn" id="btnCapA">Capture A &mdash; OFF</button>
-        <button class="btn" id="btnCapB">Capture B &mdash; ON</button>
-      </div>
-      <div class="kv" style="margin-top:9px"><span>Baseline A</span><b id="kvA">not captured</b></div>
-      <div class="kv"><span>Test B</span><b id="kvB">not captured</b></div>
-      <div class="row" style="margin-top:9px">
-        <button class="btn sm" id="btnClearCap">Clear</button>
-        <button class="btn sm" id="btnExportCmp" disabled>Export comparison</button>
-      </div>
-    </section>
+    </details>
 
     <!-- --------------------------------------------------------- verdict -->
     <section class="card">
       <header>
-        <h2>Verdict</h2>
+        <h2>What I can tell</h2>
         <span class="spacer"></span>
         <span class="badge" id="verdictScope">live</span>
       </header>
       <div id="verdictBody"><div class="empty">Waiting for data&hellip;</div></div>
     </section>
 
-    <!-- ------------------------------------------------------- recording -->
-    <section class="card">
-      <header><h2>Record &amp; export</h2></header>
-      <div class="row">
-        <button class="btn" id="btnRec">Start recording</button>
+    <!-- --------------------------------------------- saving (collapsed) -->
+    <details class="fold">
+      <summary><h2>Save a session</h2><span class="why">optional</span></summary>
+      <div class="inner">
+        <p class="caption">Keep a recording so you can reopen it later, or send
+          it to someone else to look at.</p>
+        <div class="row">
+          <button class="btn" id="btnRec">Start recording</button>
+        </div>
+        <div class="kv" style="margin-top:9px"><span>Recorded so far</span><b class="num" id="kvRec">0 frames</b></div>
+        <hr class="sep">
+        <div class="row">
+          <button class="btn sm" id="btnExpJson" disabled>Session file</button>
+          <button class="btn sm" id="btnExpCsv" disabled>Spreadsheet</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn sm" id="btnExpWf" disabled>Full data</button>
+          <button class="btn sm" id="btnExpPng">Save picture</button>
+        </div>
+        <hr class="sep">
+        <div class="row">
+          <button class="btn sm" id="btnLoad">Reopen a saved session</button>
+          <input type="file" id="fileLoad" accept=".json" class="hidden">
+        </div>
       </div>
-      <div class="kv" style="margin-top:9px"><span>Recorded</span><b class="num" id="kvRec">0 frames</b></div>
-      <hr class="sep">
-      <div class="row">
-        <button class="btn sm" id="btnExpJson" disabled>Session JSON</button>
-        <button class="btn sm" id="btnExpCsv" disabled>Summary CSV</button>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button class="btn sm" id="btnExpWf" disabled>Waterfall CSV</button>
-        <button class="btn sm" id="btnExpPng">Waterfall PNG</button>
-      </div>
-      <hr class="sep">
-      <div class="row">
-        <button class="btn sm" id="btnLoad">Load session JSON</button>
-        <input type="file" id="fileLoad" accept=".json" class="hidden">
-      </div>
-    </section>
+    </details>
   </div>
 </main>
 
@@ -1178,13 +1368,242 @@ function computeVerdict(st, scope){
   return { findings, tips, floor, thr, topList, mean };
 }
 
+/* ======================================================= plain-language layer
+   Everything below turns the measurement into something a person who has never
+   seen a spectrum analyser can act on. The charts are evidence; this is the
+   answer.                                                                    */
+
+const MAP_LO = 0, MAP_HI = 85;                 // 2400-2485 MHz, the useful band
+const mapPct = ch => (ch - MAP_LO) / (MAP_HI - MAP_LO + 1) * 100;
+
+/* Identify the individual THINGS transmitting, not the channels they sit on. */
+function detectOccupants(st){
+  const { mean, sd, n } = st;
+  const out = { list: [], hop: null, floor: 0, overloaded: false };
+  if (!n) return out;
+
+  const ctrl = []; for (let i=84;i<=125;i++) ctrl.push(mean[i]);
+  const floor = median(ctrl);
+  out.floor = floor;
+  out.overloaded = floor > 15;
+  const thr = Math.max(8, floor + 10);
+
+  const busy = new Array(NCH).fill(false);
+  for (let i=0;i<NCH;i++) busy[i] = mean[i] > thr;
+
+  // Wi-Fi: a wide flat block that holds still.
+  for (const p of runsOf(busy).filter(r => r.len >= 12)){
+    const wf = nearestWifi((p.lo+p.hi)/2);
+    // Level is the plateau's MEDIAN, not its peak: if a narrowband gadget is
+    // parked on top of this Wi-Fi channel, the peak is the gadget, and using it
+    // would report the interferer's strength as the router's.
+    const lv = []; for (let c=p.lo;c<=p.hi;c++) lv.push(mean[c]);
+    out.list.push({ lo:p.lo, hi:p.hi, kind:'wifi', level:median(lv),
+      label:'Wi-Fi', sub:`ch ${wf.ch}` });
+  }
+
+  // Narrowband: one device parked on one frequency and never moving.
+  const bleAdv = new Set([1,2,3,25,26,27,79,80,81]);
+  for (let c=1;c<NCH-1;c++){
+    if (mean[c] < thr || bleAdv.has(c)) continue;
+    if (mean[c] < mean[c-1] || mean[c] < mean[c+1]) continue;
+    const nb=[]; for (let k=c-9;k<=c+9;k++) if (k>=0&&k<NCH&&Math.abs(k-c)>2) nb.push(mean[k]);
+    const local = median(nb);
+    let lo=c, hi=c;
+    for (let k=c-1;k>=0 && mean[k] > Math.max(thr*0.6, local*1.6);k--) lo=k;
+    for (let k=c+1;k<NCH && mean[k] > Math.max(thr*0.6, local*1.6);k++) hi=k;
+    if ((hi-lo+1) > 5 || mean[c] <= Math.max(thr, local*2.2 + 4)) continue;
+    // Only merge with other narrowband finds. Deduping against Wi-Fi too would
+    // hide a gadget sitting ON a Wi-Fi channel - which is the case that matters
+    // most, since the two then fight over the same slice of spectrum.
+    if (out.list.some(o => o.kind==='unknown' && Math.abs(o.peak - c) < 6)) continue;
+    out.list.push({ lo, hi, peak:c, kind:'unknown', level:mean[c],
+      label:'Unknown device', sub:`${MHZ(c)} MHz` });
+  }
+
+  // Hopping: energy everywhere, never the same place twice.
+  let sdSum=0, mSum=0;
+  for (let c=2;c<=80;c++){ sdSum+=sd[c]; mSum+=mean[c]; }
+  if (n>=8 && mSum/79 > 4 && (mSum>0 ? sdSum/mSum : 0) > 0.5)
+    out.hop = { lo:2, hi:80, level:mSum/79 };
+
+  // Wi-Fi first so the narrowband markers paint on top of it, then by position.
+  out.list.sort((a,b)=> (a.kind==='wifi'?0:1) - (b.kind==='wifi'?0:1) || a.lo-b.lo);
+  return out;
+}
+
+function renderAirMap(occ){
+  const strip = $('airStrip');
+  strip.querySelectorAll('.occ,.occLabel,.hop').forEach(e=>e.remove());
+  const none = $('airNone');
+
+  if (!occ.list.length && !occ.hop){
+    none.classList.remove('hidden');
+    none.textContent = S.frames.length
+      ? 'Nothing loud enough to identify. The air here is clear.'
+      : 'Nothing measured yet';
+    return;
+  }
+  none.classList.add('hidden');
+
+  const cs = getComputedStyle(document.documentElement);
+  const COLOR = {
+    wifi:    cs.getPropertyValue('--band-wifi').trim(),
+    unknown: cs.getPropertyValue('--critical').trim(),
+  };
+
+  if (occ.hop){
+    const h = document.createElement('div');
+    h.className = 'hop';
+    h.style.left = mapPct(occ.hop.lo)+'%';
+    h.style.width = (mapPct(occ.hop.hi+1)-mapPct(occ.hop.lo))+'%';
+    h.style.top = '38px'; h.style.height = '34px';
+    h.title = 'Bluetooth hops constantly across the whole band';
+    strip.appendChild(h);
+
+    const hl = document.createElement('div');
+    hl.className = 'occLabel';
+    hl.style.left = '50%'; hl.style.top = '78px';
+    hl.style.color = cs.getPropertyValue('--band-bt').trim();
+    hl.innerHTML = '<b>Bluetooth</b><em>hops across all of this</em>';
+    strip.appendChild(hl);
+  }
+
+  // Labels sit in their own band above the blocks and step down when they
+  // would collide, so a crowded room stays readable.
+  let lastCentre = -99, lane = 0;
+  for (const o of occ.list){
+    const left = mapPct(o.lo), width = Math.max(0.6, mapPct(o.hi+1) - mapPct(o.lo));
+    const colour = COLOR[o.kind] || COLOR.unknown;
+
+    const b = document.createElement('div');
+    b.className = 'occ';
+    b.style.left = left+'%'; b.style.width = width+'%';
+    // An unknown gadget can sit inside a Wi-Fi block, so it paints above and
+    // slightly taller - otherwise the thing you are hunting hides behind the
+    // thing you already knew about.
+    if (o.kind === 'unknown'){ b.style.top='31px'; b.style.height='48px'; b.style.zIndex='2'; }
+    else { b.style.top = '38px'; }
+    b.style.background = colour;
+    b.style.opacity = String(0.55 + Math.min(0.45, o.level/100*0.45));
+    b.title = `${o.label} · ${o.sub} · busy ${o.level.toFixed(0)}% of the time`;
+    strip.appendChild(b);
+
+    const centre = left + width/2;
+    lane = (centre - lastCentre < 13) ? (lane+1) % 2 : 0;
+    lastCentre = centre;
+
+    const l = document.createElement('div');
+    l.className = 'occLabel';
+    l.style.left = Math.min(94, Math.max(6, centre)) + '%';
+    l.style.top = lane ? '2px' : '2px';
+    l.style.color = colour;
+    l.innerHTML = `<b>${o.label}</b><em>${o.sub}</em>`
+                + `<i style="height:${lane ? 4 : 14}px"></i>`;
+    if (lane) l.style.top = '18px';
+    strip.appendChild(l);
+  }
+
+  // Frequency ruler, in MHz because that is what a router's settings page says.
+  const ticks = $('airTicks');
+  if (!ticks.childElementCount){
+    for (const mhz of [2400,2420,2440,2460,2480]){
+      const t = document.createElement('i');
+      t.style.left = mapPct(mhz-2400)+'%';
+      t.textContent = mhz;
+      ticks.appendChild(t);
+    }
+  }
+}
+
+/* The one line that answers "should I care, and what do I do". */
+function renderAnswer(st, occ){
+  const band = $('answerBand'), act = $('ansAct');
+  const setAct = html => { act.innerHTML = html; };
+
+  if (!S.connected && !S.demo){
+    band.className = 'answer';
+    $('ansState').textContent = 'Not connected';
+    $('ansSay').textContent = 'Plug in the Pico and click Connect. Nothing is being measured yet.';
+    setAct('<a class="btn" href="https://github.com/Qutaiba-Khader/rf24-scanner/blob/main/SETUP.md">How to set it up</a>');
+    return;
+  }
+  if (!st.n){
+    band.className = 'answer';
+    $('ansState').textContent = 'Listening…';
+    $('ansSay').textContent = 'Waiting for the first full scan of the band.';
+    setAct('');
+    return;
+  }
+
+  if (occ.overloaded){
+    band.className = 'answer critical';
+    $('ansState').textContent = 'Move the scanner away';
+    $('ansSay').innerHTML = 'Something very strong is so close that it is swamping the '
+      + 'receiver, which makes every other reading on this page too high. Move the '
+      + 'scanner a metre or two further away and look again.';
+    setAct('');
+    return;
+  }
+
+  const inBand = Array.from(st.mean.slice(2,81));
+  const busy = inBand.reduce((a,b)=>a+b,0)/inBand.length;
+  const unknowns = occ.list.filter(o=>o.kind==='unknown');
+  const wifis = occ.list.filter(o=>o.kind==='wifi');
+
+  let cls, state, say;
+  if (busy < 6)       { cls='good';     state='The air is clear'; }
+  else if (busy < 18) { cls='warning';  state='Moderately busy'; }
+  else if (busy < 35) { cls='serious';  state='Busy'; }
+  else                { cls='critical'; state='Very crowded'; }
+
+  if (unknowns.length){
+    const top = unknowns.sort((a,b)=>b.level-a.level)[0];
+    say = `There is an unidentified transmitter sitting on <b>${top.sub}</b> and `
+        + `holding it ${top.level.toFixed(0)}% of the time. That is the signature of a `
+        + `gadget with a fixed 2.4&nbsp;GHz radio &mdash; an LED controller, an RF remote, `
+        + `a wireless dongle. Use the three steps below to prove which one it is.`;
+    if (cls === 'good') cls = 'warning';
+  } else if (wifis.length){
+    say = `Mostly Wi-Fi &mdash; ${wifis.length === 1 ? 'one network' : wifis.length + ' networks'} `
+        + `nearby. No fixed-frequency gadget stands out, so if your earbuds still cut `
+        + `out, suspect something <b>wideband</b> like a USB 3.0 port or drive.`;
+  } else if (busy < 6){
+    say = 'Nothing is competing for the air right now. If your earbuds still drop out, '
+        + 'the cause is intermittent &mdash; leave this running and watch for a stripe to appear.';
+  } else {
+    say = 'Energy is spread out with no single culprit standing still. That is usually '
+        + 'Bluetooth traffic, some of it your own earbuds.';
+  }
+
+  band.className = 'answer ' + cls;
+  $('ansState').textContent = state;
+  $('ansSay').innerHTML = say;
+
+  setAct(S.capA && S.capB
+    ? '<span class="lab">Result is below</span>'
+    : '<button class="btn primary" onclick="document.querySelector(\'.hunt\').scrollIntoView({behavior:\'smooth\',block:\'center\'})">Find the culprit</button>');
+}
+
+function updateSteps(){
+  $('step1').className = 'step' + (S.capA ? ' done' : (S.capturing?.which==='A' ? ' active' : ''));
+  $('step2').className = 'step' + (S.capB ? ' done' : (S.capturing?.which==='B' ? ' active'
+                          : (S.capA ? ' active' : '')));
+  $('step3').className = 'step' + (S.capA && S.capB ? ' done' : '');
+}
+
 function renderVerdict(){
   const scope = ($('verdictScope').textContent||'live');
   let st, label;
-  if (S.capB){ st = S.capB.stats; label = 'capture B'; }
+  if (S.capB){ st = S.capB.stats; label = 'with device on'; }
   else if (S.frames.length){ st = statsOf(S.frames.slice(-90)); label = 'live'; }
   else { st = statsOf([]); label='live'; }
   $('verdictScope').textContent = label;
+
+  const occ = detectOccupants(st);
+  renderAirMap(occ);
+  renderAnswer(st, occ);
+  updateSteps();
 
   const v = computeVerdict(st, label);
   const box = $('verdictBody');
@@ -1209,7 +1628,9 @@ function renderVerdict(){
   }
   box.innerHTML = html;
 }
-setInterval(()=>{ if (S.frames.length) renderVerdict(); }, 2000);
+// Always runs, so the answer band can say "not connected" / "listening" too,
+// not only once there is data to talk about.
+setInterval(renderVerdict, 2000);
 
 /* ================================================================= compare */
 function startCapture(which){
@@ -1219,23 +1640,25 @@ function startCapture(which){
   // you physically unplugging the box. On real hardware you do that yourself.
   if (S.demo) demoDeviceOn = (which === 'B');
   S.capturing = { which, endsAt: Date.now()+secs*1000, frames:[] };
-  $('kv'+which).textContent = 'capturing…';
+  $('kv'+which).textContent = `recording for ${secs}s…`;
   $('btnCapA').disabled = $('btnCapB').disabled = true;
+  updateSteps();
   log(`Capture ${which}: recording ${secs}s…`);
 }
 function finishCapture(){
   const cap = S.capturing; S.capturing = null;
   $('btnCapA').disabled = $('btnCapB').disabled = false;
-  if (!cap.frames.length){ $('kv'+cap.which).textContent='no frames'; return; }
+  if (!cap.frames.length){ $('kv'+cap.which).textContent='nothing recorded'; updateSteps(); return; }
   const rec = { frames:cap.frames, stats:statsOf(cap.frames), at:Date.now() };
   if (cap.which === 'A') S.capA = rec; else S.capB = rec;
-  $('kv'+cap.which).textContent = `${cap.frames.length} frames`;
+  $('kv'+cap.which).textContent = `recorded (${cap.frames.length} scans)`;
   log(`Capture ${cap.which} complete: ${cap.frames.length} frames.`);
   if (S.capA && S.capB){
     $('deltaCard').classList.remove('hidden');
     $('btnExportCmp').disabled = false;
     renderFingerprint();
     redrawStatic();
+    $('deltaCard').scrollIntoView({ behavior:'smooth', block:'center' });
   }
   renderVerdict();
 }
@@ -1264,6 +1687,15 @@ function renderFingerprint(){
     `B (${S.capB.stats.n} frames) minus A (${S.capA.stats.n} frames)`;
   const box = $('fingerprint');
   const up = d.ranked.filter(r=>r.delta>0).slice(0,8);
+
+  // Mirror the conclusion into step 3 so the answer is where the eye already is.
+  $('step3Say').innerHTML = up.length
+    ? `<b>Found it.</b> Switching that device on added traffic at `
+      + `<b>${MHZ(up[0].ch)} MHz</b> (+${up[0].delta.toFixed(0)}%). Details below.`
+    : `<b>Nothing changed.</b> That device is not transmitting on 2.4&nbsp;GHz, is too `
+      + `far from the scanner, or only transmits in bursts. Try a longer recording, or `
+      + `move the scanner closer.`;
+
   if (!up.length){
     box.innerHTML = `<hr class="sep"><div class="empty">No channel changed significantly. `
       + `Either the device is not radiating in 2.4 GHz, it is off-band, it is too far from `
@@ -1538,10 +1970,12 @@ $('btnCapA').onclick = () => startCapture('A');
 $('btnCapB').onclick = () => startCapture('B');
 $('btnClearCap').onclick = () => {
   S.capA = S.capB = null; S.capturing = null;
-  $('kvA').textContent = $('kvB').textContent = 'not captured';
+  $('kvA').textContent = $('kvB').textContent = 'not recorded';
   $('deltaCard').classList.add('hidden');
   $('btnExportCmp').disabled = true;
   $('btnCapA').disabled = $('btnCapB').disabled = false;
+  $('step3Say').textContent = 'Anything that got louder between the two recordings is '
+    + 'coming from that device. Nothing else can explain it.';
   renderVerdict();
 };
 
