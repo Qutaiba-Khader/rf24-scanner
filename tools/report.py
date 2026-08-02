@@ -462,9 +462,9 @@ def arc_diagram(atts, suspects):
     people already read fluently - an arc's footprint on the baseline IS the
     spectrum it occupies, so overlap is visible rather than described.
     """
-    W, H = 1000.0, 300.0
-    BASE = 232.0          # baseline y
-    TOP = 96.0            # tallest arc apex
+    W, H = 1000.0, 330.0
+    BASE = 262.0          # baseline y
+    TOP = 128.0           # highest arc apex (labels stack above this)
     F0, F1 = 2400.0, 2485.0
 
     def x(mhz):
@@ -519,23 +519,50 @@ def arc_diagram(atts, suspects):
                     f"width='{x(MHZ(zhi+1))-x(MHZ(zlo)):.1f}' "
                     f"height='{BASE - TOP + 26:.1f}' fill='#d03b3b' opacity='.10'/>")
 
-    # Taller arc = takes more of the air. Labels alternate height so they clear.
+    # Every device gets its OWN apex height, widest arc lowest, so overlapping
+    # bands nest visibly instead of the tallest hiding the rest. Three devices
+    # sharing one band was drawn as a single blob until this.
     order = sorted(rows, key=lambda r: -(r["hi"] - r["lo"]))
+    n = len(order)
     for i, r in enumerate(order):
+        r["apex"] = TOP + i * (58.0 / max(1, n - 1) if n > 1 else 0)
+        r["cx"] = (x(MHZ(r["lo"])) + x(MHZ(r["hi"] + 1))) / 2.0
+
+    for r in order:
         lo, hi = MHZ(r["lo"]), MHZ(r["hi"] + 1)
-        apex = TOP + (i % 2) * 16
-        parts.append(f"<path d='{arc(lo, hi, apex)}' fill='{r['colour']}' "
-                     f"fill-opacity='.16' stroke='{r['colour']}' stroke-width='2.6'/>")
-        cx = (x(lo) + x(hi)) / 2.0
-        parts.append(f"<line x1='{cx:.1f}' y1='{apex - 4:.1f}' x2='{cx:.1f}' "
-                     f"y2='{apex - 20:.1f}' stroke='{r['colour']}' stroke-width='1.4'/>")
-        conf = f" &#183; {r['conf']}%" if r["conf"] is not None else " &#183; untested"
-        parts.append(
-            f"<text x='{cx:.1f}' y='{apex - 26:.0f}' class='alab' "
-            f"fill='{r['colour']}'>{html.escape(r['name'])}{conf}</text>")
-        parts.append(
-            f"<text x='{cx:.1f}' y='{apex - 14:.0f}' class='asub' "
-            f"fill='{r['colour']}'>{lo}-{MHZ(r['hi'])} MHz &#183; ch {r['lo']}-{r['hi']}</text>")
+        parts.append(f"<path d='{arc(lo, hi, r['apex'])}' fill='{r['colour']}' "
+                     f"fill-opacity='.12' stroke='{r['colour']}' stroke-width='2.6'/>")
+
+    # Labels in stacked lanes. Placing them all at the arc centre printed three
+    # names on top of each other; each now takes the first lane it fits in, with
+    # a leader line back down to its own arc.
+    LANE_H, CHAR_W = 26.0, 5.6
+    lanes = []                      # lanes[k] = list of (x_left, x_right) taken
+    for r in sorted(order, key=lambda z: z["cx"]):
+        # Recompute per row. Reusing lo/hi from the arc loop above left every
+        # label showing the LAST device's start frequency.
+        lo, hi = MHZ(r["lo"]), MHZ(r["hi"])
+        conf = f" · {r['conf']}%" if r["conf"] is not None else " · untested"
+        text = r["name"] + conf
+        half = max(len(text), 26) * CHAR_W / 2.0
+        lx = min(W - half - 2, max(half + 2, r["cx"]))
+        want = (lx - half, lx + half)
+        k = 0
+        while k < len(lanes) and any(not (want[1] < a or want[0] > b) for a, b in lanes[k]):
+            k += 1
+        if k == len(lanes):
+            lanes.append([])
+        lanes[k].append(want)
+        ly = 22.0 + k * LANE_H
+
+        parts.append(f"<line x1='{r['cx']:.1f}' y1='{r['apex'] - 2:.1f}' "
+                     f"x2='{lx:.1f}' y2='{ly + 5:.1f}' stroke='{r['colour']}' "
+                     f"stroke-width='1' opacity='.55'/>")
+        parts.append(f"<text x='{lx:.1f}' y='{ly:.0f}' class='alab' "
+                     f"fill='{r['colour']}'>{html.escape(text)}</text>")
+        parts.append(f"<text x='{lx:.1f}' y='{ly + 12:.0f}' class='asub' "
+                     f"fill='{r['colour']}'>{lo}-{hi} MHz &#183; "
+                     f"ch {r['lo']}-{r['hi']} &#183; +{r['avg']:.0f}</text>")
 
     parts.append(f"<line x1='0' y1='{BASE:.1f}' x2='{W:.0f}' y2='{BASE:.1f}' "
                  f"stroke='#6a6a64' stroke-width='2'/>")
