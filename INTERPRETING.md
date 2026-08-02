@@ -36,6 +36,25 @@ Two consequences worth keeping in mind:
   and record the response. Until someone does, treat cross-band comparisons as
   indicative rather than measured.
 
+### Calibrating the tilt with a router — no extra gear, no transmitting
+
+Your router is a constant-power transmitter whose **frequency you can set**.
+That is exactly what a calibration source is.
+
+1. Put the scanner **10–20 cm** from the router and leave it there. Do not move
+   it again — the whole point is that only the frequency changes.
+2. Set the router to **channel 1**, fixed, 20 MHz, not auto.
+3. `python tools\scan.py --port COM19 --seconds 60 --save cal_ch01.json`
+4. Repeat for channels 2 … 13, one capture each.
+5. The peak occupancy per capture traces the **instrument's response across the
+   band**, because the source power never changed.
+
+Flat result → the scanner is flat and cross-band comparisons are safe. A tilt →
+you now have the correction curve, and it applies to every past capture.
+
+Set the router back to 11 afterwards. This is receive-only throughout — the
+scanner never transmits.
+
 ---
 
 ## The band map

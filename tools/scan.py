@@ -60,8 +60,16 @@ def find_port(explicit=None):
     )
 
 
-def collect(port, seconds, raw=False):
-    """Read frames for `seconds`. Returns (frames, control_lines)."""
+def collect(port, seconds, raw=False, bw=None):
+    """Read frames for `seconds`. Returns (frames, control_lines).
+
+    `bw` selects the receiver bandwidth (0=250kbps, 1=1Mbps, 2=2Mbps). It is
+    not a cosmetic setting: the rate sets the receiver's IF bandwidth, so a
+    *wideband* source delivers more power into a wider receiver while a
+    *narrowband* one delivers the same power at every setting. Capturing the
+    same scene at all three turns a 1-bit detector into a shape discriminator -
+    see `bwtest.py`.
+    """
     print(f"Opening {port} ...", flush=True)
     ser = serial.Serial(port, 115200, timeout=0.5)
     time.sleep(0.3)
@@ -71,6 +79,9 @@ def collect(port, seconds, raw=False):
     # into a closed port), which means it is still halted when we come back.
     ser.write(b"?\n")
     time.sleep(0.2)
+    if bw is not None:
+        ser.write(f"B{bw}\n".encode())
+        time.sleep(0.3)
     ser.write(b"G\n")
     time.sleep(0.2)
 
@@ -236,6 +247,10 @@ def main():
                     help='what was powered on/off for this capture, e.g. "FancyLEDs box ON"')
     ap.add_argument("--html", metavar="FILE", help="write a standalone HTML report")
     ap.add_argument("--open", action="store_true", help="open the HTML report when done")
+    ap.add_argument("--bw", type=int, choices=(0, 1, 2), metavar="N",
+                    help="receiver bandwidth: 0=250kbps 1=1Mbps 2=2Mbps. "
+                         "Wideband sources read higher at 2, narrowband ones "
+                         "do not change - see bwtest.py")
     args = ap.parse_args()
 
     if args.list:
@@ -249,7 +264,8 @@ def main():
         compare(*args.compare)
         return 0
 
-    frames, control = collect(find_port(args.port), args.seconds, args.raw)
+    frames, control = collect(find_port(args.port), args.seconds, args.raw,
+                              bw=args.bw)
     if not args.raw:
         report(frames, control)
     if args.save and frames:

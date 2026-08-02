@@ -26,6 +26,7 @@ nRF24L01+PA+LNA ──SPI0──► Pico ──USB serial──► Chrome ──
 | `web/index.html` | The whole tool. One file, no dependencies, no network. |
 | `web/serve.py` | Fallback local server. Only needed if `file://` is refused. |
 | `tools/scan.py` | Command-line scanner — no browser needed. `--label --save --html --compare` |
+| `tools/bwtest.py` | **Bandwidth sweep** — captures the same scene at 250 kbps / 1 Mbps / 2 Mbps to separate wideband from narrowband, and *loud* from *marginal* |
 | `tools/timeline.py` | Records what was powered on for each capture; `diff` finds contiguous clusters |
 | `tools/report.py` + `build_report.py` | Builds the HTML report with device attribution and the interception map |
 | `tools/results_md.py` | Writes `RESULTS.md` — every finding in plain tables |
