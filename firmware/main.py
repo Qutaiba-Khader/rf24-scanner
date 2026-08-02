@@ -1,6 +1,8 @@
 """
-rf24scan v1.0.0 - 2.4 GHz spectrum scanner firmware
-Raspberry Pi Pico (RP2040) + nRF24L01+PA+LNA, MicroPython.
+rf24scan - 2.4 GHz spectrum scanner firmware
+Raspberry Pi Pico / Pico 2 / Pico W + nRF24L01+PA+LNA, MicroPython.
+Version is the VERSION constant below - deliberately not repeated here, so the
+two cannot drift apart.
 
 ============================  RECEIVE ONLY  ============================
 This firmware NEVER transmits. The radio is held in PRIM_RX for its whole
