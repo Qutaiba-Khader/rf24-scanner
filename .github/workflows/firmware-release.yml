@@ -57,6 +57,24 @@ jobs:
           EOF
           cat "$GITHUB_WORKSPACE/rf24scan-manifest.py"
 
+      # Name the USB device. Without this every MicroPython board calls itself
+      # "Board in FS mode", so the browser's serial picker shows a wall of
+      # identical entries and you have to guess which one is the scanner.
+      # Appending to the board header (rather than passing CFLAGS) is what
+      # survives the rp2 port's cmake wrapper.
+      - name: Brand the USB descriptor
+        run: |
+          H="micropython/ports/rp2/boards/${{ matrix.board }}/mpconfigboard.h"
+          cat >> "$H" <<'EOF'
+
+          /* rf24scan: identify ourselves in the host's device list */
+          #undef MICROPY_HW_USB_MANUFACTURER_STRING
+          #define MICROPY_HW_USB_MANUFACTURER_STRING "rf24scan"
+          #undef MICROPY_HW_USB_PRODUCT_FS_STRING
+          #define MICROPY_HW_USB_PRODUCT_FS_STRING "rf24scan spectrum scanner"
+          EOF
+          tail -8 "$H"
+
       - name: Build
         run: |
           make -C micropython/mpy-cross -j"$(nproc)"
@@ -71,7 +89,8 @@ jobs:
         run: |
           BUILD="micropython/ports/rp2/build-${{ matrix.board }}"
           ls -l "$BUILD/firmware.uf2"
-          for needle in 'rf24scan' 'nRF24 not responding' 'S %d %d %d %d %d %d %s'; do
+          for needle in 'rf24scan' 'nRF24 not responding' 'S %d %d %d %d %d %d %s' \
+                        'rf24scan spectrum scanner'; do
             if strings "$BUILD/firmware.elf" | grep -qF "$needle"; then
               echo "  found: $needle"
             else

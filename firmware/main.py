@@ -68,7 +68,7 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 # How long to leave the CPU alone at boot before starting to scan.
 #
