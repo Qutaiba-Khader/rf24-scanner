@@ -912,6 +912,12 @@ def rank_suspects(names, atts, suspects):
         if r["rssi"] is None or b["rssi"] > r["rssi"]:
             r["rssi"] = b["rssi"]
         r["kind"] = "Bluetooth LE (advertising)"
+        r["advertiser"] = True
+        # Top two bits of the first byte: 11 static random, 01 resolvable
+        # private, 00 non-resolvable private. Anything but a public address
+        # rotates, so it can never be tied to a device by address alone.
+        first = int(b["mac"][:2], 16)
+        r["rotating"] = b.get("addrtype", 1) != 0 or (first & 0xC0) != 0xC0
         # An ADVERTISER is not a hopper. It uses three fixed channels - 2402,
         # 2426 and 2480 - and 2426 happens to sit inside the band in question.
         # Only a CONNECTED link hops the data channels, and that is credited
@@ -1006,8 +1012,25 @@ def rank_suspects(names, atts, suspects):
             r["score"] += min(20, r["bytes"] / 1500.0)
             r["why"].append(f"{r['bytes']:,} bytes of measured airtime")
         if not r.get("label"):
-            r["score"] += 6
-            r["why"].append("<b>unidentified</b> &mdash; never named, never tested")
+            # "Unidentified" is only a reason to look harder when the thing CAN
+            # be identified. A rotating BLE address never can be, so treating it
+            # as untested work put twenty pieces of unresolvable noise above
+            # every named device in the room.
+            if r.get("rotating"):
+                r["why"].append("unnamed, and <b>unnameable</b> &mdash; a rotating "
+                                "private address, so this is not a lead to follow")
+            else:
+                r["score"] += 6
+                r["why"].append("<b>unidentified</b> &mdash; never named, never tested")
+
+        # A BLE ADVERTISER is not a continuous emitter. It sends a short burst on
+        # three fixed channels every fraction of a second and is silent between.
+        # It cannot produce a band that reads 21-41% busy, so it must not be
+        # scored as though it could.
+        if r.get("advertiser") and not r.get("live"):
+            r["score"] *= 0.45
+            r["why"].append("only an advertising burst on 3 channels &mdash; far too "
+                            "low a duty cycle to hold a band busy")
 
     victims, cands = [], []
     for r in rows.values():
