@@ -83,7 +83,7 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.0.9"
+VERSION = "1.1.0"
 
 # How long to leave the CPU alone at boot before starting to scan.
 #
@@ -272,6 +272,18 @@ def radio_init(rate_idx):
     time.sleep_ms(2)                         # Tpd2stby
 
 
+# Yield to the scheduler every N channels while sweeping.
+#
+# time.sleep_us() is a BUSY-WAIT - it does not yield. A full pass busy-waits
+# 126 x 200us = ~25ms solid, and with only one yield per pass TinyUSB gets
+# serviced about 2% of the time. On RP2 that is enough to kill the USB stack:
+# micropython/micropython#6853 (a while-True in main.py makes the board vanish
+# from the port list) and #8904 (a looping script saved as main.py locks up,
+# while the same code run over mpremote is fine). Yielding every few channels
+# costs ~16ms per pass and keeps USB alive.
+YIELD_EVERY = 8
+
+
 @micropython.native
 def sweep_pass(counts, lo, hi, dwell):
     """One visit to every channel in [lo, hi]. Increments counts in place."""
@@ -281,7 +293,13 @@ def sweep_pass(counts, lo, hi, dwell):
     w = _w
     r = _r
     su = time.sleep_us
+    sm = time.sleep_ms
+    since = 0
     for ch in range(lo, hi + 1):
+        since += 1
+        if since >= YIELD_EVERY:
+            since = 0
+            sm(1)              # the only thing here that actually yields
         # Change channel while in Standby-I (CE low).
         w[0] = CMD_W_REGISTER | REG_RF_CH
         w[1] = ch
@@ -475,6 +493,23 @@ def main():
                     cmdbuf = ""
             elif len(cmdbuf) < 32:
                 cmdbuf += ch
+
+        # Do not sweep until a host is actually there.
+        #
+        # This is the other half of the same problem. The sweep loop is the
+        # thing that starves USB, so running it unattended from boot is exactly
+        # the pattern micropython#6853/#8904 describe. Idling on sleep_ms costs
+        # nothing, keeps the USB stack healthy, and means the board always
+        # enumerates - the scan starts when someone connects and says hello.
+        if not _host_seen:
+            now = time.ticks_ms()
+            if time.ticks_diff(now, last_hb) >= 500:
+                last_hb = now
+                if LED is not None:          # slow pulse: waiting for a host
+                    led_state ^= 1
+                    LED(led_state)
+            time.sleep_ms(50)
+            continue
 
         if not sc.running or not sc.radio_ok:
             now = time.ticks_ms()
