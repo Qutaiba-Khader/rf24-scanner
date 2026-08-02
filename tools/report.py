@@ -245,6 +245,15 @@ text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
 .who.sus{background:rgba(213,81,129,.20);border:1px solid #d55181}
 .susp{color:#d55181}
 .dev{margin:1px 0}
+.arcwrap{margin:6px 0 2px;overflow-x:auto}
+.arcwrap svg{width:100%;min-width:720px;height:auto;display:block}
+.arcwrap text{font:11px system-ui,-apple-system,"Segoe UI",sans-serif}
+.arcwrap .alab{font-weight:700;font-size:12px;text-anchor:middle}
+.arcwrap .asub{font-size:10px;text-anchor:middle;opacity:.9;
+font-family:ui-monospace,Consolas,monospace}
+.arcwrap .fx{fill:#8d8d86;font-size:9.5px;text-anchor:middle;
+font-family:ui-monospace,Consolas,monospace}
+.arcwrap .wch{fill:#7d7d76;font-size:10px;text-anchor:middle;font-weight:600}
 .map{position:relative;margin:10px 0 4px}
 .rowlab{font-size:12.5px;margin:14px 0 4px;display:flex;gap:8px;
 align-items:baseline;flex-wrap:wrap}
@@ -444,6 +453,113 @@ MAP_SPAN = MAP_HI - MAP_LO + 1
 
 def _x(c):
     return (c - MAP_LO) / MAP_SPAN * 100
+
+
+def arc_diagram(atts, suspects):
+    """The classic 2.4 GHz overlap picture: one half-arc per occupant.
+
+    Drawn the way Wi-Fi channel charts are drawn, because that is the shape
+    people already read fluently - an arc's footprint on the baseline IS the
+    spectrum it occupies, so overlap is visible rather than described.
+    """
+    W, H = 1000.0, 300.0
+    BASE = 232.0          # baseline y
+    TOP = 96.0            # tallest arc apex
+    F0, F1 = 2400.0, 2485.0
+
+    def x(mhz):
+        return (mhz - F0) / (F1 - F0) * W
+
+    def arc(lo_mhz, hi_mhz, y_top):
+        x1, x2 = x(lo_mhz), x(hi_mhz)
+        rx, ry = (x2 - x1) / 2.0, BASE - y_top
+        return f"M {x1:.1f},{BASE:.1f} A {rx:.1f},{ry:.1f} 0 0 1 {x2:.1f},{BASE:.1f}"
+
+    parts = []
+
+    # --- Wi-Fi 1..11 as faint reference arcs, so the scale is familiar -------
+    for k in range(1, 12):
+        c = 2412 + 5 * (k - 1)
+        solid = k in (1, 6, 11)
+        parts.append(
+            f"<path d='{arc(c - 11, c + 11, TOP + 34)}' fill='none' "
+            f"stroke='{'#4a4a46' if solid else '#333330'}' stroke-width='1.4' "
+            + ("" if solid else "stroke-dasharray='3 3'") + "/>")
+        parts.append(f"<text x='{x(c):.1f}' y='{BASE + 30:.0f}' class='wch'>{k}</text>")
+
+    # --- the occupants ------------------------------------------------------
+    rows = []
+    for a in atts or []:
+        if a["verdict"] not in ("confirmed", "weak") or not a["bands"]:
+            continue
+        b = max(a["bands"], key=lambda z: z["avg"])
+        victim = "Buds" in a["name"]
+        rows.append({"name": a["name"].split("(")[0].strip(),
+                     "lo": b["lo"], "hi": b["hi"], "avg": b["avg"],
+                     "conf": a["confidence"], "victim": victim,
+                     "colour": "#199e70" if victim
+                     else ("#d03b3b" if b["avg"] >= 20 else "#fab219")})
+    for s in suspects or []:
+        rows.append({"name": "Unidentified", "lo": s["lo"], "hi": s["hi"],
+                     "avg": s["level"], "conf": None, "victim": False,
+                     "colour": "#d55181"})
+    if not rows:
+        return ""
+
+    attackers = [r for r in rows if not r["victim"]]
+    zlo = min(r["lo"] for r in attackers)
+    zhi = max(r["hi"] for r in attackers)
+    stolen = len([c for c in range(zlo, zhi + 1) if BT_LO <= c <= BT_HI])
+
+    # Bluetooth's whole playground, drawn as a flat band under everything.
+    bx1, bx2 = x(MHZ(BT_LO)), x(MHZ(BT_HI))
+    parts.insert(0, f"<rect x='{bx1:.1f}' y='{BASE - 6:.1f}' width='{bx2-bx1:.1f}' "
+                    f"height='6' fill='#199e70' opacity='.30'/>")
+    parts.insert(0, f"<rect x='{x(MHZ(zlo)):.1f}' y='{TOP - 26:.1f}' "
+                    f"width='{x(MHZ(zhi+1))-x(MHZ(zlo)):.1f}' "
+                    f"height='{BASE - TOP + 26:.1f}' fill='#d03b3b' opacity='.10'/>")
+
+    # Taller arc = takes more of the air. Labels alternate height so they clear.
+    order = sorted(rows, key=lambda r: -(r["hi"] - r["lo"]))
+    for i, r in enumerate(order):
+        lo, hi = MHZ(r["lo"]), MHZ(r["hi"] + 1)
+        apex = TOP + (i % 2) * 16
+        parts.append(f"<path d='{arc(lo, hi, apex)}' fill='{r['colour']}' "
+                     f"fill-opacity='.16' stroke='{r['colour']}' stroke-width='2.6'/>")
+        cx = (x(lo) + x(hi)) / 2.0
+        parts.append(f"<line x1='{cx:.1f}' y1='{apex - 4:.1f}' x2='{cx:.1f}' "
+                     f"y2='{apex - 20:.1f}' stroke='{r['colour']}' stroke-width='1.4'/>")
+        conf = f" &#183; {r['conf']}%" if r["conf"] is not None else " &#183; untested"
+        parts.append(
+            f"<text x='{cx:.1f}' y='{apex - 26:.0f}' class='alab' "
+            f"fill='{r['colour']}'>{html.escape(r['name'])}{conf}</text>")
+        parts.append(
+            f"<text x='{cx:.1f}' y='{apex - 14:.0f}' class='asub' "
+            f"fill='{r['colour']}'>{lo}-{MHZ(r['hi'])} MHz &#183; ch {r['lo']}-{r['hi']}</text>")
+
+    parts.append(f"<line x1='0' y1='{BASE:.1f}' x2='{W:.0f}' y2='{BASE:.1f}' "
+                 f"stroke='#6a6a64' stroke-width='2'/>")
+    for mhz in range(2400, 2486, 10):
+        parts.append(f"<line x1='{x(mhz):.1f}' y1='{BASE:.1f}' x2='{x(mhz):.1f}' "
+                     f"y2='{BASE + 6:.1f}' stroke='#6a6a64' stroke-width='1'/>")
+        parts.append(f"<text x='{x(mhz):.1f}' y='{BASE + 18:.0f}' class='fx'>{mhz}</text>")
+    parts.append(f"<text x='{x(2404):.1f}' y='{BASE + 30:.0f}' class='wch' "
+                 f"fill='#7d7d76'>Wi-Fi ch</text>")
+
+    return (
+        f"<div class='arcwrap'><svg viewBox='0 0 {W:.0f} {H:.0f}' "
+        f"preserveAspectRatio='xMidYMid meet' role='img'>{''.join(parts)}</svg></div>"
+        f"<div class='key'>"
+        f"<span><i style='background:#199e70'></i>your earbuds (the victim)</span>"
+        f"<span><i style='background:#d03b3b'></i>strong interferer</span>"
+        f"<span><i style='background:#fab219'></i>weaker interferer</span>"
+        f"<span><i style='background:#d55181'></i>unidentified</span>"
+        f"<span><i style='background:#4a4a46'></i>Wi-Fi 1&ndash;11 for scale</span></div>"
+        f"<div class='note'>Each arc's footprint on the baseline <b>is</b> the spectrum "
+        f"that device occupies &mdash; where arcs sit over the same stretch of baseline, "
+        f"they are competing. The green strip along the bottom is the full range "
+        f"Bluetooth hops through; the red wash is where the interferers land inside it, "
+        f"costing <b>{stolen} of 79</b> channels.</div>")
 
 
 def interception_map(atts, suspects):
@@ -794,7 +910,7 @@ def build(mean, meta, attributions=None, suspects=None):
 
 <section class="card">
   <h2>Where everything sits, and where they collide</h2>
-  {interception_map(attributions, suspects)}
+  {arc_diagram(attributions, suspects)}
 </section>
 
 <section class="card">
