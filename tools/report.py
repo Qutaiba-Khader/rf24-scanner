@@ -254,6 +254,11 @@ font-family:ui-monospace,Consolas,monospace}
 .arcwrap .fx{fill:#8d8d86;font-size:9.5px;text-anchor:middle;
 font-family:ui-monospace,Consolas,monospace}
 .arcwrap .wch{fill:#7d7d76;font-size:10px;text-anchor:middle;font-weight:600}
+.arcwrap .hoplab{fill:#3fbf90;font-size:11.5px;font-weight:700;text-anchor:middle;
+letter-spacing:.05em}
+.arcwrap .ziplab{fill:#e8706f;font-size:11.5px;font-weight:700;text-anchor:middle}
+.arcwrap .zonecap{fill:#e8706f;font-size:11px;font-weight:800;text-anchor:middle;
+letter-spacing:.13em}
 .map{position:relative;margin:10px 0 4px}
 .rowlab{font-size:12.5px;margin:14px 0 4px;display:flex;gap:8px;
 align-items:baseline;flex-wrap:wrap}
@@ -462,9 +467,10 @@ def arc_diagram(atts, suspects):
     people already read fluently - an arc's footprint on the baseline IS the
     spectrum it occupies, so overlap is visible rather than described.
     """
-    W, H = 1000.0, 330.0
+    W, H = 1000.0, 356.0
     BASE = 262.0          # baseline y
     TOP = 128.0           # highest arc apex (labels stack above this)
+    BRK = BASE + 44.0     # span-bracket strip, below the frequency axis
     F0, F1 = 2400.0, 2485.0
 
     def x(mhz):
@@ -511,13 +517,39 @@ def arc_diagram(atts, suspects):
     zhi = max(r["hi"] for r in attackers)
     stolen = len([c for c in range(zlo, zhi + 1) if BT_LO <= c <= BT_HI])
 
-    # Bluetooth's whole playground, drawn as a flat band under everything.
-    bx1, bx2 = x(MHZ(BT_LO)), x(MHZ(BT_HI))
-    parts.insert(0, f"<rect x='{bx1:.1f}' y='{BASE - 6:.1f}' width='{bx2-bx1:.1f}' "
-                    f"height='6' fill='#199e70' opacity='.30'/>")
-    parts.insert(0, f"<rect x='{x(MHZ(zlo)):.1f}' y='{TOP - 26:.1f}' "
-                    f"width='{x(MHZ(zhi+1))-x(MHZ(zlo)):.1f}' "
-                    f"height='{BASE - TOP + 26:.1f}' fill='#d03b3b' opacity='.10'/>")
+    # Bluetooth's whole playground, drawn as a big filled arc UNDER everything.
+    # This is the thing the picture has to make obvious: the buds do not live at
+    # one frequency, they use the entire span, and the interferers sit INSIDE
+    # it. Drawn as a thin baseline strip it read as "nothing overlaps the buds",
+    # which is the opposite of the finding.
+    bx1, bx2 = x(MHZ(BT_LO)), x(MHZ(BT_HI + 1))
+    zx1, zx2 = x(MHZ(zlo)), x(MHZ(zhi + 1))
+    parts.insert(0, f"<path d='{arc(MHZ(BT_LO), MHZ(BT_HI + 1), BASE - 74)}' "
+                    f"fill='#199e70' fill-opacity='.13' stroke='#199e70' "
+                    f"stroke-width='1.6' stroke-dasharray='7 5'/>")
+
+    # Where the interferers land inside that span - the actual collision.
+    parts.insert(1, f"<rect x='{zx1:.1f}' y='{TOP - 8:.1f}' "
+                    f"width='{zx2-zx1:.1f}' "
+                    f"height='{BASE - TOP + 8:.1f}' fill='#d03b3b' opacity='.13'/>")
+    parts.insert(2, f"<text x='{(zx1+zx2)/2:.1f}' y='{TOP - 16:.0f}' "
+                    f"class='zonecap'>INTERFERERS</text>")
+
+    # The two span labels live BELOW the frequency axis on their own bracket.
+    # Drawn inside the plot they printed straight over the arcs and were half
+    # unreadable; a dimension bracket says the same thing and collides with
+    # nothing.
+    parts.append(f"<path d='M {bx1:.1f},{BRK-6:.0f} L {bx1:.1f},{BRK:.0f} "
+                 f"L {bx2:.1f},{BRK:.0f} L {bx2:.1f},{BRK-6:.0f}' fill='none' "
+                 f"stroke='#199e70' stroke-width='1.6'/>")
+    parts.append(f"<line x1='{zx1:.1f}' y1='{BRK:.0f}' x2='{zx2:.1f}' "
+                 f"y2='{BRK:.0f}' stroke='#d03b3b' stroke-width='5'/>")
+    parts.append(f"<text x='{(bx1+bx2)/2:.1f}' y='{BRK+17:.0f}' class='hoplab'>"
+                 f"YOUR EARBUDS HOP ACROSS ALL OF THIS &#8212; 2402&#8211;2480 MHz, "
+                 f"79 channels</text>")
+    parts.append(f"<text x='{(bx1+bx2)/2:.1f}' y='{BRK+33:.0f}' class='ziplab'>"
+                 f"&#9632; the red part is gone &#8212; {stolen} of those 79 channels "
+                 f"are taken by the interferers above</text>")
 
     # Every device gets its OWN apex height, widest arc lowest, so overlapping
     # bands nest visibly instead of the tallest hiding the rest. Three devices
@@ -582,11 +614,13 @@ def arc_diagram(atts, suspects):
         f"<span><i style='background:#fab219'></i>weaker interferer</span>"
         f"<span><i style='background:#d55181'></i>unidentified</span>"
         f"<span><i style='background:#4a4a46'></i>Wi-Fi 1&ndash;11 for scale</span></div>"
-        f"<div class='note'>Each arc's footprint on the baseline <b>is</b> the spectrum "
-        f"that device occupies &mdash; where arcs sit over the same stretch of baseline, "
-        f"they are competing. The green strip along the bottom is the full range "
-        f"Bluetooth hops through; the red wash is where the interferers land inside it, "
-        f"costing <b>{stolen} of 79</b> channels.</div>")
+        f"<div class='note'><b>Nothing sits on your earbuds' own frequencies</b> "
+        f"&mdash; the gap either side of them is genuinely empty. The collision is "
+        f"the big dashed green arc: your earbuds do not stay at 2458&ndash;2466, they "
+        f"hop across <b>all 79 channels</b> 1600 times a second, and the interferers "
+        f"sit <b>inside</b> that span. Every pass through the red zone lands on them, "
+        f"so adaptive hopping blacklists those channels and your earbuds work with "
+        f"<b>{79-stolen} of 79</b> instead of the full set.</div>")
 
 
 def interception_map(atts, suspects):
