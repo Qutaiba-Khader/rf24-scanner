@@ -191,6 +191,9 @@ tbody tr:nth-child(even){background:rgba(255,255,255,.028)}
   border-radius:var(--r);
 }
 .log summary{padding:10px 14px;cursor:pointer;font-size:13px;font-weight:600;user-select:none}
+.log summary .why{font-weight:400;font-size:12px;opacity:.9;margin-left:8px}
+.logbar{display:flex;gap:8px;align-items:center;padding:0 14px 8px}
+.logbar .lab{margin-left:auto}
 .log pre{
   margin:0;padding:0 14px 12px;max-height:190px;overflow:auto;
   font-size:11.5px;line-height:1.55;white-space:pre-wrap;word-break:break-all;
@@ -637,8 +640,13 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
   </div>
 </main>
 
-<details class="log">
-  <summary>Serial log</summary>
+<details class="log" open>
+  <summary>Activity log <span class="why">every action, and every problem</span></summary>
+  <div class="logbar">
+    <button class="btn sm" id="btnLogCopy">Copy log</button>
+    <button class="btn sm" id="btnLogClear">Clear</button>
+    <span class="lab" id="logCount">0 lines</span>
+  </div>
   <pre id="logBox" class="mono"></pre>
 </details>
 
@@ -779,6 +787,7 @@ const S = {
   peak: new Float32Array(NCH),
   avgInit: false,
   connected:false, demo:false, paused:false,
+  firstFrameAt:0, silenceTimer:0,
   fw:'-', sweepMs:0,
   recording:false, recFrames:[], recStart:0,
   capturing:null,                   // {which,'A'|'B', endsAt, frames:[]}
@@ -789,14 +798,47 @@ const S = {
 /* ============================================================ serial layer */
 let port=null, reader=null, writer=null, readLoopAlive=false;
 
-function log(line, kind){
-  const box = $('logBox');
-  const stamp = new Date().toLocaleTimeString();
-  box.textContent += `[${stamp}] ${line}\n`;
-  // keep the log bounded; a multi-hour session would otherwise grow forever
-  if (box.textContent.length > 60000) box.textContent = box.textContent.slice(-40000);
-  box.scrollTop = box.scrollHeight;
+/* The log is a denial-of-service surface: it is fed straight from the serial
+   port, so a fast or garbled stream can call this hundreds of times a second.
+   Appending with `textContent +=` re-reads the whole buffer each time (O(n^2))
+   and reading scrollTop forces a synchronous layout on every single line, which
+   is enough to lock the tab solid. So: keep a bounded array, and repaint at most
+   once per animation frame, only when the panel is actually open. */
+const LOG_MAX_LINES = 400;
+let _logLines = [], _logPending = false;
+
+function log(line){
+  _logLines.push(`[${new Date().toLocaleTimeString()}] ${line}`);
+  if (_logLines.length > LOG_MAX_LINES) _logLines.splice(0, _logLines.length - LOG_MAX_LINES);
+  if (_logPending) return;
+  _logPending = true;
+  requestAnimationFrame(() => {
+    _logPending = false;
+    const box = $('logBox');
+    box.textContent = _logLines.join('\n');
+    const n = $('logCount'); if (n) n.textContent = _logLines.length + ' lines';
+    if (box.parentElement && box.parentElement.open) box.scrollTop = box.scrollHeight;
+  });
 }
+
+/* Nothing should fail silently. An exception thrown inside a promise or an
+   event handler otherwise vanishes into the console, which is exactly where
+   nobody is looking when the page appears to have frozen. */
+window.addEventListener('error', e => {
+  log(`ERROR: ${e.message} (${(e.filename||'').split('/').pop()}:${e.lineno})`);
+});
+window.addEventListener('unhandledrejection', e => {
+  log(`ERROR (unhandled promise): ${e.reason && e.reason.message ? e.reason.message : e.reason}`);
+});
+
+/* Watchdog. If the render loop stops running the page has stalled; say so
+   afterwards rather than leaving "it froze" as the only evidence. */
+let _tick = performance.now();
+setInterval(() => {
+  const gap = performance.now() - _tick;
+  if (gap > 3000) log(`WARNING: the page stalled for ${(gap/1000).toFixed(1)}s`);
+  _tick = performance.now();
+}, 1000);
 
 function setStatus(text, cls){
   $('statusTxt').textContent = text;
@@ -818,16 +860,41 @@ async function connect(showAll){
     return;
   }
   try{
+    log(showAll ? 'Opening device picker (showing every device)…'
+                : 'Opening device picker (Raspberry Pi devices only)…');
     port = await navigator.serial.requestPort(
       showAll ? {} : { filters: [{ usbVendorId: RPI_VENDOR }] });
+
+    const inf = (port.getInfo && port.getInfo()) || {};
+    const hx = v => '0x' + (v || 0).toString(16).padStart(4,'0');
+    log(`Device chosen: vendor ${hx(inf.usbVendorId)}, product ${hx(inf.usbProductId)}`
+      + (inf.usbVendorId === RPI_VENDOR ? ' (Raspberry Pi)' : ' (not a Raspberry Pi VID)'));
+
+    log('Opening port at 115200 baud…');
     await port.open({ baudRate:115200 });
+    log('Port open.');
+
     writer = port.writable.getWriter();
     S.connected = true; S.demo = false;
     setStatus('Connected','on');
     $('btnConnect').textContent = 'Disconnect';
-    log('Serial port opened.');
+    $('btnConnectAll').classList.add('hidden');
+
     readLoop();
+    log('Listening for data. Asking the board to identify itself…');
     setTimeout(()=>{ send('?'); pushSettings(); }, 260);
+
+    // If the port opens but nothing ever arrives, say so instead of sitting
+    // there looking connected. Silence has specific causes worth naming.
+    S.firstFrameAt = 0;
+    clearTimeout(S.silenceTimer);
+    S.silenceTimer = setTimeout(()=>{
+      if (!S.firstFrameAt && S.connected)
+        log('WARNING: connected for 8s but no data has arrived. Either the board is '
+          + 'not running rf24scan, it is still in its 3s start-up delay, or the port '
+          + 'is held by another program (close Thonny / any terminal). Unplugging and '
+          + 'replugging the board clears a stuck port.');
+    }, 8000);
   }catch(err){
     if (err && err.name === 'NotFoundError'){
       // Either cancelled, or the filter hid everything. Offer the escape hatch
@@ -846,6 +913,8 @@ async function connect(showAll){
 }
 
 async function disconnect(){
+  log('Disconnecting…');
+  clearTimeout(S.silenceTimer);
   readLoopAlive = false;
   try{ if (reader) await reader.cancel(); }catch(e){}
   try{ if (writer){ writer.releaseLock(); writer=null; } }catch(e){}
@@ -883,9 +952,12 @@ async function readLoop(){
 }
 
 async function send(cmd){
-  if (!writer) return;
-  try{ await writer.write(new TextEncoder().encode(cmd + '\n')); }
-  catch(err){ log('Write failed: ' + err); }
+  if (!writer){ log(`Cannot send "${cmd}" - not connected.`); return; }
+  try{
+    await writer.write(new TextEncoder().encode(cmd + '\n'));
+    log(`> ${cmd}`);
+  }
+  catch(err){ log(`Write of "${cmd}" FAILED: ${err}`); }
 }
 
 function pushSettings(){
@@ -895,15 +967,40 @@ function pushSettings(){
 }
 
 /* ------------------------------------------------------------- line parser */
+// Garbage on the wire is summarised once a second rather than logged per line.
+// A desynced stream is exactly the case where per-line logging would bury the
+// UI, and it is also the case where you most want the tool to stay usable.
+let _bad = 0, _badFrames = 0, _badAt = 0;
+function noteGarbage(line){
+  _bad++;
+  const now = Date.now();
+  if (now - _badAt < 1000) return;
+  _badAt = now;
+  log(`${_bad} unreadable line(s) in the last second; last was: ${line.slice(0,70)}`);
+  _bad = 0;
+}
+
 function handleLine(line){
   if (!line) return;
   if (line[0] === 'S' && line[1] === ' '){
     const f = parseFrame(line);
-    if (f) onFrame(f);
+    if (f) { onFrame(f); return; }
+    // A malformed frame is worth surfacing - silently dropping every one looks
+    // identical to "connected but nothing is happening".
+    if (++_badFrames % 40 === 1) log('Malformed data frame ignored (' + _badFrames + ' so far).');
     return;
   }
   if (line[0] === '#'){
-    if (line.startsWith('#hb ')) return;                 // heartbeat, not noise
+    // Heartbeats mean "board alive but NOT scanning" - worth surfacing, but
+    // once every 10s rather than every second.
+    if (line.startsWith('#hb ')){
+      const now = Date.now();
+      if (now - (S.lastHb || 0) > 10000){
+        S.lastHb = now;
+        log('Board is alive but not scanning (paused, or the radio is not responding).');
+      }
+      return;
+    }
     log(line);
     if (line.startsWith('#rf24scan')) { S.fw = line.split(' ')[1] || '?'; $('kvFw').textContent = S.fw; }
     if (line.startsWith('#err'))      setStatus('Radio fault','err');
@@ -913,7 +1010,7 @@ function handleLine(line){
     }
     return;
   }
-  log('? ' + line);
+  noteGarbage(line);
 }
 
 function parseFrame(line){
@@ -933,6 +1030,12 @@ function parseFrame(line){
 
 /* ======================================================== frame ingestion */
 function onFrame(f){
+  if (!S.firstFrameAt){
+    S.firstFrameAt = Date.now();
+    clearTimeout(S.silenceTimer);
+    log(`First data frame received: ${f.hi - f.lo + 1} channels, ${f.passes} measurements each, `
+      + `${f.ms}ms per scan. The radio is working.`);
+  }
   S.live = f; S.sweepMs = f.ms;
   S.frames.push(f);
   if (S.frames.length > MAX_FRAMES) S.frames.shift();
@@ -1247,6 +1350,7 @@ function drawDelta(){
 /* ============================================================= render pump */
 let dirty = true, hoverCh = null, hoverChD = null;
 function frameLoop(){
+  _tick = performance.now();          // feeds the stall watchdog
   if (dirty){
     drawWaterfall(); drawBars();
     if (!$('deltaCard').classList.contains('hidden')) drawDelta();
@@ -1847,6 +1951,7 @@ function renderTable(){
 
 /* ================================================================= export */
 function download(name, text, mime){
+  log(`Saving ${name} (${(text.length/1024).toFixed(1)} KB)…`);
   const blob = new Blob([text], { type: mime || 'text/plain' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name;
@@ -2043,7 +2148,26 @@ $('rngDwell').onchange  = e => send('D'+e.target.value);
 $('selRate').onchange   = e => send('B'+e.target.value);
 $('rngCapLen').oninput  = e => { $('lblCapLen').textContent = e.target.value + ' s'; };
 
-$('btnPeakReset').onclick = () => { S.peak.fill(0); dirty = true; };
+$('btnLogCopy').onclick = async () => {
+  const txt = _logLines.join('\n');
+  try{
+    await navigator.clipboard.writeText(txt);
+    log(`Copied ${_logLines.length} log lines to the clipboard.`);
+  }catch(err){
+    // Clipboard needs a secure context and permission; fall back to a download
+    // so the log can still be captured and sent on.
+    log('Clipboard refused, saving the log as a file instead: ' + err);
+    download(`rf24scan-log-${stamp()}.txt`, txt, 'text/plain');
+  }
+};
+$('btnLogClear').onclick = () => {
+  _logLines = [];
+  $('logBox').textContent = '';
+  $('logCount').textContent = '0 lines';
+  log('Log cleared.');
+};
+
+$('btnPeakReset').onclick = () => { log('Peak hold reset.'); S.peak.fill(0); dirty = true; };
 $('btnTable').onclick = () => {
   const t = $('tableView');
   t.classList.toggle('hidden');
@@ -2052,6 +2176,7 @@ $('btnTable').onclick = () => {
 };
 
 $('selPalette').onchange = e => {
+  log('Colour scheme: ' + e.target.value);
   LUT = buildLUT(e.target.value === 'inferno' ? RAMP_INFERNO : RAMP_BLUE);
   repaintWaterfallFromRows();
   paintColorbar();
