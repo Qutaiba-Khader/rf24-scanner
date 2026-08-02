@@ -83,7 +83,7 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 
 # How long to leave the CPU alone at boot before starting to scan.
 #
@@ -184,8 +184,31 @@ _HEXD = b"0123456789abcdef"
 # knowingly: the browser side no longer stalls (its log used to be O(n^2) with a
 # forced layout per line), and a blocking write that works beats a clever one
 # that hangs the board before it can even enumerate.
+# Stay SILENT until the host says something first.
+#
+# This is the whole fix for "LED flutters for 3 seconds, then goes dark".
+# MicroPython's USB CDC write blocks while nothing is draining the port, and at
+# boot nothing is: Windows enumerates the device but does not OPEN it. So the
+# first write - the start-up banner - blocked forever and the scan loop never
+# began. USB stayed enumerated, which is why the board looked healthy from the
+# host while doing nothing at all.
+#
+# Polling sys.stdout for POLLOUT to detect this is NOT supported in MicroPython
+# and hangs (see v1.0.3). There is no reliable "is the host reading?" call. But
+# there is a reliable proxy: a host that has sent us a byte is a host that has
+# the port open. So we say nothing until we hear something, and the web tool
+# sends "?" the moment it connects.
+_host_seen = False
+
+
+def host_has_spoken():
+    return _host_seen
+
+
 def say(text):
-    """Write a line. Never raise - a failed write must not kill the scan loop."""
+    """Write a line, but only once a host has proved it is there."""
+    if not _host_seen:
+        return False
     try:
         sys.stdout.write(text)
         return True
@@ -401,10 +424,12 @@ def main():
     else:
         time.sleep_ms(BOOT_SETTLE_MS)
 
+    global _host_seen
+
     sc = Scanner()
-    sc.banner()
+    # No banner here: nothing is reading yet, and writing would block. The
+    # greeting goes out the moment the host sends its first byte.
     sc.self_test()
-    sc.info()
 
     poller = select.poll()
     poller.register(sys.stdin, select.POLLIN)
@@ -421,6 +446,12 @@ def main():
             ch = sys.stdin.read(1)
             if not ch:
                 break
+            if not _host_seen:
+                # First byte ever from the host: it has the port open, so it is
+                # now safe to write without risking a permanent block. Greet it.
+                _host_seen = True
+                sc.banner()
+                sc.info()
             if ch in "\r\n":
                 if cmdbuf:
                     sc.handle(cmdbuf)

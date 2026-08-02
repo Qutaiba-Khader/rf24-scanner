@@ -702,7 +702,7 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
   <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/blob/main/INTERPRETING.md">Reading results</a>
   <div class="meta">
     <b>rf24scan</b> &middot; receive only, never transmits<br>
-    The .uf2 already contains MicroPython &mdash; hold BOOTSEL, drag, done
+    Page build <b id="buildStamp">&hellip;</b> &middot; tell me this if something misbehaves
   </div>
 </footer>
 </div>
@@ -935,10 +935,14 @@ async function readLoop(){
       const { value, done } = await reader.read();
       if (done) break;
       buf += dec.decode(value, { stream:true });
-      let i;
-      while ((i = buf.indexOf('\n')) >= 0){
-        handleLine(buf.slice(0,i).replace(/\r$/,''));
-        buf = buf.slice(i+1);
+      // Split once per chunk. The old loop did buf = buf.slice(i+1) per line,
+      // which re-copies the remainder every time - O(n^2) on a burst, and a
+      // burst is exactly what arrives when the board has been buffering while
+      // nothing was reading it.
+      if (buf.indexOf('\n') >= 0){
+        const parts = buf.split('\n');
+        buf = parts.pop();                    // trailing partial line
+        for (const p of parts) handleLine(p.charCodeAt(p.length-1) === 13 ? p.slice(0,-1) : p);
       }
       if (buf.length > 8192) buf = '';        // resync on garbage
     }
@@ -2277,6 +2281,13 @@ if (new URLSearchParams(location.search).has('demo')){
   $('btnDemo').classList.remove('hidden');
   log('Demo mode available (?demo=1).');
 }
+
+// Which copy of this page is actually running. A stale cached page looks
+// identical to a fresh one, so make the answer visible rather than guessable.
+const PAGE_BUILD = 'b11';
+$('buildStamp').textContent = PAGE_BUILD;
+log(`Page build ${PAGE_BUILD}. If this is not the newest, you are on a cached copy - `
+  + `reload with Ctrl+Shift+R.`);
 
 paintColorbar();
 redrawStatic();
