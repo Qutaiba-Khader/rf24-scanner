@@ -62,6 +62,19 @@ SERIAL PROTOCOL  (USB CDC, line oriented, 8N1, baud irrelevant)
     T            re-run the radio self-test
     Z            reset sequence counter
 
+WHAT THE ONBOARD LED MEANS  (the only diagnostic that works with no host)
+
+  fast flutter, ~4/sec, for 3 seconds     starting up, letting USB enumerate
+  then it settles into one of:
+    steady blink ~1.5/sec                 SCANNING - radio found, all good
+    slow blink, 1 toggle per second       alive, but the nRF24 is NOT answering
+                                          -> check the 10uF cap, then MISO/MOSI
+    DARK, no blinking at all              the firmware is not running
+
+  The slow blink matters: an earlier version simply stopped blinking when the
+  radio was missing, which is indistinguishable from a crash, and that is
+  exactly how it got read.
+
 FLASHING: see ../SETUP.md
 """
 
@@ -70,7 +83,7 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 
 # How long to leave the CPU alone at boot before starting to scan.
 #
@@ -438,6 +451,13 @@ def main():
                     # Keep retrying: the usual cause is a loose jumper or a
                     # brownout, both of which can come good without a reboot.
                     sc.self_test()
+                # SLOW blink (1 toggle/sec) so "alive but no radio" is visibly
+                # different from "dead". Previously the LED simply stopped here,
+                # which is indistinguishable from a crash - and that is exactly
+                # how it got read.
+                if LED is not None:
+                    led_state ^= 1
+                    LED(led_state)
             time.sleep_ms(20)
             continue
 
