@@ -13,9 +13,104 @@ permissions:
   contents: write
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Build a single drag-and-drop .uf2 per board: MicroPython with our main.py
+  # frozen into the image, so there is no separate "now copy main.py with
+  # Thonny" step. main.py is still shipped on its own for anyone who already
+  # runs MicroPython or wants to edit the code live.
+  # ---------------------------------------------------------------------------
+  build-uf2:
+    name: Build ${{ matrix.board }} uf2
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [RPI_PICO, RPI_PICO_W, RPI_PICO2]
+    env:
+      MPY_VERSION: v1.24.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib \
+            build-essential cmake git
+          arm-none-eabi-gcc --version | head -1
+
+      - name: Fetch MicroPython ${{ env.MPY_VERSION }}
+        run: |
+          git clone --depth 1 --branch "$MPY_VERSION" https://github.com/micropython/micropython.git
+          echo "MicroPython $(git -C micropython describe --tags --always)"
+
+      # A frozen module named exactly main.py is what MicroPython's boot
+      # sequence looks for, so the scanner starts on power-up with nothing on
+      # the filesystem at all.
+      - name: Manifest freezing main.py
+        run: |
+          cat > "$GITHUB_WORKSPACE/rf24scan-manifest.py" <<EOF
+          include("\$(PORT_DIR)/boards/manifest.py")
+          module("main.py", base_path="$GITHUB_WORKSPACE/firmware")
+          EOF
+          cat "$GITHUB_WORKSPACE/rf24scan-manifest.py"
+
+      - name: Build
+        run: |
+          make -C micropython/mpy-cross -j"$(nproc)"
+          cd micropython/ports/rp2
+          make BOARD=${{ matrix.board }} submodules
+          make BOARD=${{ matrix.board }} -j"$(nproc)" \
+               FROZEN_MANIFEST="$GITHUB_WORKSPACE/rf24scan-manifest.py"
+
+      # A .uf2 that builds but does not actually contain our code would be worse
+      # than no .uf2 at all, so prove the freeze landed before shipping it.
+      - name: Verify our code is actually frozen in
+        run: |
+          BUILD="micropython/ports/rp2/build-${{ matrix.board }}"
+          ls -l "$BUILD/firmware.uf2"
+          for needle in 'rf24scan' 'nRF24 not responding' 'S %d %d %d %d %d %d %s'; do
+            if strings "$BUILD/firmware.elf" | grep -qF "$needle"; then
+              echo "  found: $needle"
+            else
+              echo "::error::'$needle' is missing from the build - main.py was NOT frozen in"
+              exit 1
+            fi
+          done
+          # UF2 magic word at the start of every block (little-endian 0x0A324655)
+          head -c 4 "$BUILD/firmware.uf2" | xxd -p | grep -qi '55463200' \
+            || { echo "::error::not a valid UF2 file"; exit 1; }
+          echo "UF2 magic OK"
+
+      # Deliberately NO tag in the filename: releases/latest/download/<name>
+      # needs an exact name, so a versioned filename would break the permanent
+      # download link on every release. The version lives inside the firmware
+      # (VERSION) and in the release title.
+      - name: Name the artifact
+        run: |
+          BUILD="micropython/ports/rp2/build-${{ matrix.board }}"
+          case "${{ matrix.board }}" in
+            RPI_PICO)   OUT="rf24scan-pico.uf2" ;;
+            RPI_PICO_W) OUT="rf24scan-pico_w.uf2" ;;
+            RPI_PICO2)  OUT="rf24scan-pico2.uf2" ;;
+          esac
+          cp "$BUILD/firmware.uf2" "$OUT"
+          sha256sum "$OUT"
+          ls -l "$OUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uf2-${{ matrix.board }}
+          path: rf24scan-*.uf2
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
   release:
     name: Package and publish
     runs-on: ubuntu-latest
+    needs: build-uf2
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,18 +152,31 @@ jobs:
           python tools/check_ids.py web/index.html
           python tools/check_selfcontained.py web/index.html
 
-      - name: Package
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: uf2-*
+          merge-multiple: true
+          path: uf2
+
+      - name: Collect assets
         id: pkg
         run: |
           TAG="${{ steps.v.outputs.tag }}"
+          mv uf2/*.uf2 .
+          ls -l ./*.uf2
           mkdir -p "dist/rf24scan-$TAG"
           cp firmware/main.py "dist/rf24scan-$TAG/main.py"
           cp SETUP.md INTERPRETING.md README.md "dist/rf24scan-$TAG/"
           cp web/index.html "dist/rf24scan-$TAG/rf24scan-web-tool.html"
+          cp ./*.uf2 "dist/rf24scan-$TAG/"
           (cd dist && zip -qr "../rf24scan-$TAG.zip" "rf24scan-$TAG")
-          echo "sha=$(sha256sum "rf24scan-$TAG.zip" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-          echo "fwsha=$(sha256sum firmware/main.py | cut -d' ' -f1)"  >> "$GITHUB_OUTPUT"
-          ls -l "rf24scan-$TAG.zip"
+          {
+            echo "### Checksums (sha256)"
+            echo '```'
+            sha256sum ./*.uf2 firmware/main.py "rf24scan-$TAG.zip" | sed 's#\./##'
+            echo '```'
+          } > checksums.md
+          cat checksums.md
 
       - name: Release notes
         run: |
@@ -76,30 +184,40 @@ jobs:
           cat > notes.md <<EOF
           ## rf24scan $TAG
 
-          2.4 GHz spectrum scanner for Raspberry Pi Pico (RP2040) + nRF24L01+PA+LNA.
+          2.4 GHz spectrum scanner for Raspberry Pi Pico + nRF24L01+PA+LNA.
           **Receive only** — this firmware never transmits.
 
-          ### Install
-          1. Flash MicroPython (\`RPI_PICO\` build) — <https://micropython.org/download/RPI_PICO/>
-          2. Copy \`main.py\` to the Pico as \`main.py\` (Thonny, or \`mpremote cp main.py :main.py\`)
-          3. Close Thonny, then open the web tool and click **Connect Pico**
+          ### Install — the easy way (one file, no Thonny)
 
-          Web tool (no install, runs in the browser):
+          Pick the \`.uf2\` for your board, hold **BOOTSEL**, plug in the Pico,
+          and drag the file onto the **RPI-RP2** drive. That is the whole install:
+          the \`.uf2\` already contains MicroPython **and** the scanner, and it
+          starts running the moment the board reboots.
+
+          | board | file |
+          |---|---|
+          | Pico (RP2040) | \`rf24scan-pico.uf2\` |
+          | Pico W | \`rf24scan-pico_w.uf2\` |
+          | Pico 2 (RP2350) | \`rf24scan-pico2.uf2\` |
+
+          Then open the web tool and click **Connect Pico**:
           <https://qutaiba-khader.github.io/rf24-scanner/>
 
-          Full instructions: [SETUP.md](SETUP.md) · Reading results: [INTERPRETING.md](INTERPRETING.md)
+          ### Install — the manual way
 
-          ### Assets
-          | file | what |
-          |---|---|
-          | \`main.py\` | the firmware, copy straight to the Pico |
-          | \`rf24scan-$TAG.zip\` | firmware + web tool + both docs |
+          \`main.py\` is also attached, for anyone who already runs MicroPython or
+          wants to edit the code live. Flash stock MicroPython, then copy
+          \`main.py\` to the board as \`main.py\`. See [SETUP.md](SETUP.md).
 
-          \`\`\`
-          main.py   sha256 ${{ steps.pkg.outputs.fwsha }}
-          zip       sha256 ${{ steps.pkg.outputs.sha }}
-          \`\`\`
+          ### Before you power it
+          Solder a **10 µF capacitor** across VCC/GND at the nRF24 module. The
+          PA+LNA front end browns out off a bare 3V3 pin — this is the most
+          common reason these modules appear dead.
+
+          Reading results: [INTERPRETING.md](INTERPRETING.md)
+
           EOF
+          cat checksums.md >> notes.md
           cat notes.md
 
       - name: Publish
@@ -107,20 +225,29 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.v.outputs.tag }}"
-          gh release create "$TAG" \
-            --title "rf24scan $TAG" \
-            --notes-file notes.md \
-            firmware/main.py "rf24scan-$TAG.zip"
+          # Idempotent: create the release if it is new, otherwise refresh its
+          # notes and overwrite the assets. Lets the workflow be re-run against
+          # an existing tag without having to burn a new version number.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG exists - updating notes and assets"
+            gh release edit "$TAG" --title "rf24scan $TAG" --notes-file notes.md
+            gh release upload "$TAG" ./*.uf2 firmware/main.py "rf24scan-$TAG.zip" --clobber
+          else
+            gh release create "$TAG" \
+              --title "rf24scan $TAG" \
+              --notes-file notes.md \
+              ./*.uf2 firmware/main.py "rf24scan-$TAG.zip"
+          fi
 
-      - name: Verify the release is downloadable
+      - name: Verify every asset is downloadable
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.v.outputs.tag }}"
           gh release view "$TAG" --json assets \
-            --jq '.assets[] | "\(.name)  \(.size) bytes  \(.url)"'
+            --jq '.assets[] | "\(.name)  \(.size) bytes"'
           # A release that exists but 404s on download has happened before.
-          for a in "main.py" "rf24scan-$TAG.zip"; do
+          for a in $(gh release view "$TAG" --json assets --jq '.assets[].name'); do
             code=$(curl -s -o /dev/null -w '%{http_code}' -L \
               "https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/$a")
             echo "$a -> HTTP $code"

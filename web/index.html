@@ -236,7 +236,7 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
   <span class="pill" id="statusPill"><span class="led"></span><span id="statusTxt">Disconnected</span></span>
   <span class="pill"><span class="num" id="statFps">0.0</span>&nbsp;frames/s</span>
   <span class="pill"><span class="num" id="statFrames">0</span>&nbsp;frames</span>
-  <a class="btn" id="btnFw" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/main.py">Get firmware</a>
+  <a class="btn" id="btnFw" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/rf24scan-pico.uf2">Firmware .uf2</a>
   <button class="btn primary" id="btnConnect">Connect Pico</button>
   <!-- Hidden by default. Append ?demo=1 to the URL to bring it back for
        testing the UI with no radio attached. -->
@@ -431,13 +431,15 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
      so a relative link would be broken in one of the two. -->
 <footer class="foot">
   <a class="btn" href="https://github.com/Qutaiba-Khader/rf24-scanner">GitHub repo</a>
-  <a class="btn" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/main.py">Download firmware</a>
+  <a class="btn" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/rf24scan-pico.uf2">Firmware .uf2 (Pico)</a>
+  <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/rf24scan-pico2.uf2">Pico 2</a>
+  <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/rf24scan-pico_w.uf2">Pico W</a>
+  <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/main.py">main.py</a>
   <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/blob/main/SETUP.md">Setup guide</a>
   <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/blob/main/INTERPRETING.md">Reading results</a>
-  <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases">All releases</a>
   <div class="meta">
     <b>rf24scan</b> &middot; receive only, never transmits<br>
-    Pico + nRF24L01+ &middot; Chrome/Edge/Opera desktop
+    The .uf2 already contains MicroPython &mdash; hold BOOTSEL, drag, done
   </div>
 </footer>
 </div>
