@@ -257,6 +257,11 @@ font-family:ui-monospace,Consolas,monospace}
 .arcwrap .hoplab{fill:#3fbf90;font-size:11.5px;font-weight:700;text-anchor:middle;
 letter-spacing:.05em}
 .arcwrap .ziplab{fill:#e8706f;font-size:11.5px;font-weight:700;text-anchor:middle}
+table.rank td{vertical-align:top}
+table.rank .wy{font-size:11.5px;line-height:1.5;opacity:.97;max-width:30em}
+tr.sr.crit td:first-child{box-shadow:inset 3px 0 0 var(--critical)}
+tr.sr.warn td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
+tr.sr.low  td:first-child{box-shadow:inset 3px 0 0 rgba(255,255,255,.18)}
 .mac{display:block;font-size:10.5px;opacity:.9;
 font-family:ui-monospace,Consolas,monospace}
 .elim{margin:12px 0 0;padding:11px 13px;border-radius:9px;
@@ -869,6 +874,211 @@ def inventory_section(names):
 </section>"""
 
 
+# The devices being PROTECTED. They must never appear in a table headed "how
+# likely is this to be the cause" - the earbuds are the victim, and ranking the
+# thing you are trying to fix as a suspect is a category error, not a low score.
+VICTIM_WORDS = ("buds3", "buds 3", "earbud", "fma121", "galaxy buds")
+
+BLOCK_LO, BLOCK_HI = 15, 29        # nRF ch = 2415-2429 MHz, the band in question
+BUDS_LO, BUDS_HI = 58, 66          # nRF ch = 2458-2466 MHz, where the link was measured
+
+
+def rank_suspects(names, atts, suspects):
+    """Every transmitter this project has ever seen, scored by how likely it is
+    to be causing the dropouts.
+
+    The score is built from stated reasons rather than a feel, because the
+    ranking is only useful if you can see WHY something is high - and can argue
+    with it. Unnamed devices are included deliberately: an unidentified radio is
+    a worse suspect than a known one, not a better-ignored one.
+    """
+    names = names or {}
+    known = names.get("known") or {}
+    rows = {}
+
+    def touch(mac):
+        return rows.setdefault(mac, {
+            "mac": mac, "rssi": None, "kind": "", "band": None,
+            "bytes": 0, "why": [], "score": 0.0})
+
+    for a in names.get("wifi", []):
+        r = touch(a["bssid"])
+        r["rssi"] = a["rssi"]
+        r["kind"] = f"Wi-Fi AP, ch {a['ch']}"
+        r["band"] = wifi_ch_span(a["ch"])
+        r["label"] = a["ssid"] or "(hidden network)"
+    for b in names.get("ble", []):
+        r = touch(b["mac"])
+        if r["rssi"] is None or b["rssi"] > r["rssi"]:
+            r["rssi"] = b["rssi"]
+        r["kind"] = "Bluetooth LE (advertising)"
+        # An ADVERTISER is not a hopper. It uses three fixed channels - 2402,
+        # 2426 and 2480 - and 2426 happens to sit inside the band in question.
+        # Only a CONNECTED link hops the data channels, and that is credited
+        # separately below. Treating every advert as a full-band hopper put
+        # devices at -97 dBm near the top of this table.
+        r["band"] = (26, 26)
+        r.setdefault("label", b["name"] or "")
+    for q in names.get("promisc", []):
+        r = touch(q["mac"])
+        if r["rssi"] is None or q["rssi"] > r["rssi"]:
+            r["rssi"] = q["rssi"]
+        # The promiscuous channel is where the SNIFFER was listening, not
+        # necessarily the device's own channel - adjacent-channel leakage
+        # catches a ch-11 access point while sweeping ch 13. A beacon states the
+        # real channel, so never overwrite one with a capture channel.
+        if not r["kind"].startswith("Wi-Fi AP"):
+            r["kind"] = f"Wi-Fi device, ch {q['ch']}"
+            r["band"] = wifi_ch_span(q["ch"])
+        r["bytes"] = max(r["bytes"], q["bytes"])
+        if q.get("vendor"):
+            r.setdefault("label", "")
+    for mac, v in known.items():
+        r = touch(mac)
+        r["label"] = v.get("name", "")
+        note = (v.get("vendor") or "").upper()
+        if len(mac) == 16 or "ZIGBEE" in note:
+            r["kind"] = r["kind"] or "Zigbee"
+            r["band"] = r["band"] or None
+        if "CONNECTED" in note:
+            r["live"] = True
+        if v.get("zigbee_channel"):
+            f = 2405 + 5 * (v["zigbee_channel"] - 11)
+            r["kind"] = f"Zigbee ch {v['zigbee_channel']}"
+            r["band"] = (f - 1 - 2400, f + 1 - 2400)
+
+    # --- scoring, one reason at a time --------------------------------------
+    for r in rows.values():
+        rssi = r["rssi"]
+
+        # Everything positional is scaled by whether the device is loud enough
+        # to be doing anything here at all. Without this gate a -97 dBm advert
+        # scored as high as the loudest device in the room purely for sitting on
+        # the right frequency.
+        if r.get("live"):
+            # A connected Bluetooth link hops 1600 times a second across 79
+            # channels, and this scanner samples one channel for 200 us at a
+            # time. It is documented as nearly blind to exactly this. So NOT
+            # seeing a live link is what the instrument does, not evidence the
+            # link is quiet - it must not be penalised for that.
+            gate = 1.0
+            if rssi is None:
+                r["why"].append("not measured &mdash; but this scanner is nearly "
+                                "blind to hopping Bluetooth, so that is expected "
+                                "and is <b>not</b> evidence it is quiet")
+        elif rssi is None:
+            gate = 0.35
+            r["why"].append("never measured by either radio &mdash; untested")
+            r["score"] += 8
+        elif rssi > RPD_FLOOR_DBM:
+            gate = 1.0
+            r["score"] += 30 + min(20, (rssi + 64))
+            r["why"].append(f"loud here ({rssi} dBm, above the &minus;64 dBm floor)")
+        else:
+            # Falls off fast below the floor: -70 still worth a look up close,
+            # -95 is not.
+            gate = max(0.0, (rssi + 94) / 30.0)
+            r["why"].append(f"only {rssi} dBm &mdash; {'well ' if rssi < -80 else ''}"
+                            f"below the &minus;64 dBm floor, so it cannot be the "
+                            f"source of anything measured here")
+
+        b = r["band"]
+        if b and not (b[1] < BLOCK_LO or b[0] > BLOCK_HI):
+            r["score"] += 35 * gate
+            r["why"].append("covers 2415&ndash;2429 MHz, the band in question")
+        if b and b == (2, 80):
+            # A hopping Bluetooth link cannot be routed around: it is spread
+            # across the same 79 channels the earbuds use, so adaptive hopping
+            # has nowhere to move to. This is the one interferer AFH cannot dodge.
+            r["score"] += 40 * gate
+            r["why"].append("hops all 79 Bluetooth channels &mdash; <b>adaptive "
+                            "hopping cannot route around it</b>")
+        elif b and not (b[1] < BUDS_LO or b[0] > BUDS_HI):
+            r["score"] += 12 * gate
+            r["why"].append("overlaps 2458&ndash;2466 MHz where the audio link was measured")
+
+        if r.get("live"):
+            r["score"] += 45 * gate
+            r["why"].append("<b>a live connected Bluetooth link</b> &mdash; it hops "
+                            "all 79 channels continuously, and <b>adaptive hopping "
+                            "cannot route around it</b>")
+        if r["bytes"]:
+            r["score"] += min(20, r["bytes"] / 1500.0)
+            r["why"].append(f"{r['bytes']:,} bytes of measured airtime")
+        if not r.get("label"):
+            r["score"] += 6
+            r["why"].append("<b>unidentified</b> &mdash; never named, never tested")
+
+    victims, cands = [], []
+    for r in rows.values():
+        lab = (r.get("label") or "").lower()
+        (victims if any(w in lab for w in VICTIM_WORDS) else cands).append(r)
+    return sorted(cands, key=lambda x: -x["score"]), victims
+
+
+def suspects_section(names, atts, suspects):
+    ranked, victims = rank_suspects(names, atts, suspects)
+    if not ranked:
+        return ""
+
+    vic = ""
+    if victims:
+        items = "".join(
+            f"<li><b>{html.escape(v.get('label',''))}</b> "
+            f"<span class='mono'>{':'.join(v['mac'][j:j+2] for j in range(0,len(v['mac']),2))}</span>"
+            + (f" &mdash; measured at {v['rssi']} dBm" if v["rssi"] is not None else "")
+            + "</li>" for v in victims)
+        vic = (f"<p class='note'><b>Excluded, because they are the victim:</b>"
+               f"<ul style='margin:6px 0 0'>{items}</ul>"
+               f"These are the devices being protected. Whatever they emit is the "
+               f"signal we want to survive, not interference to be ranked.</p>")
+
+    body = ""
+    for i, r in enumerate(ranked, 1):
+        pretty = ":".join(r["mac"][j:j + 2] for j in range(0, len(r["mac"]), 2))
+        name = html.escape(r.get("label") or "")
+        head = f"<b>{name}</b>" if name else "<b class='susp'>unidentified device</b>"
+        band = (f"{MHZ(r['band'][0])}&ndash;{MHZ(r['band'][1])} MHz"
+                if r["band"] else "&mdash;")
+        tier = ("crit" if r["score"] >= 70 else
+                "warn" if r["score"] >= 40 else "low")
+        body += (
+            f"<tr class='sr {tier}'>"
+            f"<td class='num'><b>{i}</b></td>"
+            f"<td>{head}<span class='mac'>{pretty} &middot; {r['kind'] or 'unknown radio'}</span></td>"
+            f"<td class='mono'>{band}</td>"
+            f"<td class='mono num'>{r['rssi'] if r['rssi'] is not None else '&mdash;'}"
+            f"{' dBm' if r['rssi'] is not None else ''}</td>"
+            f"<td class='num'><b>{r['score']:.0f}</b></td>"
+            f"<td class='wy'>{'; '.join(r['why'])}</td></tr>")
+
+    return f"""
+<section class="card">
+  <h2>Every transmitter, ranked by how likely it is to be the cause</h2>
+  <p class="caption" style="margin-top:0">
+    Everything either radio has ever seen, named or not, scored on stated
+    reasons rather than a hunch &mdash; so you can disagree with any row and see
+    exactly why it sits where it does. <b>Unidentified devices score higher, not
+    lower</b>: a radio nobody has named is a worse suspect than one that has been
+    tested and cleared.</p>
+  <table class="tab rank">
+    <thead><tr><th class="num">#</th><th>Device</th><th>Occupies</th>
+      <th class="num">Signal</th><th class="num">Score</th><th>Why</th></tr></thead>
+    <tbody>{body}</tbody>
+  </table>
+  <p class="note"><b>How the score is built.</b> Loud enough to be detected here
+    (+30 and up); covers 2415&ndash;2429 MHz (+35); hops all 79 Bluetooth
+    channels, which adaptive hopping cannot route around (+40); a live connected
+    link (+25); measured airtime (up to +20); unidentified (+6). Below
+    &minus;64 dBm earns nothing at all, because such a device physically cannot
+    be the source of anything this scanner measured.</p>
+  <p class="note"><b>Read the top rows as a to-do list, not a verdict.</b> The
+    score says where to look next; only switching a device off and re-measuring
+    says what it actually does.</p>
+  {vic}
+</section>"""
+
+
 def arc_diagram(atts, suspects, names=None):
     """The classic 2.4 GHz overlap picture: one half-arc per occupant.
 
@@ -1448,6 +1658,8 @@ def build(mean, meta, attributions=None, suspects=None, names=None):
   <div class="note">Set your router to channel <b>{quietest}</b>, explicitly.
     Leaving it on <i>auto</i> means it will re-pick later and undo this.</div>
 </section>
+
+{suspects_section(names, attributions, suspects)}
 
 <section class="card">
   <h2>What to do about it</h2>
