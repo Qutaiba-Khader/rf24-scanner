@@ -16,6 +16,7 @@ reached hardware and cost a debugging session each.
 """
 
 import ast
+import re
 import builtins
 import sys
 from pathlib import Path
@@ -98,6 +99,28 @@ def main(argv):
                     problems.append(
                         f"{path}:{node.lineno} {node.name}() uses @micropython.{name}, "
                         f"which suspends the scheduler and starves USB")
+
+    # A "%" format whose placeholder count does not match its tuple is a
+    # TypeError at RUNTIME, not at import - and this firmware's info() is called
+    # from the banner path, so a mismatch there kills the board at boot with
+    # "format string didn't convert all arguments" and nothing else works.
+    # That shipped once. It is trivially checkable, so check it.
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod)):
+            continue
+        if not (isinstance(node.left, ast.Constant) and isinstance(node.left.value, str)):
+            continue
+        if not isinstance(node.right, ast.Tuple):
+            continue          # single value or a name - not statically countable
+        fmt = node.left.value
+        # Count conversions, ignoring the literal "%%" escape.
+        slots = len(re.findall(r"%[-+ #0]*[\d*]*(?:\.[\d*]+)?[hlL]?[a-zA-Z]",
+                               fmt.replace("%%", "")))
+        given = len(node.right.elts)
+        if slots != given:
+            problems.append(
+                f"{path}:{node.lineno} format string has {slots} placeholder(s) "
+                f"but {given} argument(s) - this raises at runtime, not import")
 
     module_names = collect_module_names(tree)
     for fn in funcs:

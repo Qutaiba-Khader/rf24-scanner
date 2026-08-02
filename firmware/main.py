@@ -92,7 +92,7 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 # How long to leave the CPU alone at boot before starting to scan.
 #
@@ -474,7 +474,7 @@ class Scanner:
 
     def info(self):
         say(
-            "#info radio=%s dwell=%d passes=%d lo=%d hi=%d rate=%s state=%s\n"
+            "#info radio=%s dwell=%d passes=%d lo=%d hi=%d rate=%s mode=%s state=%s\n"
             % (
                 "ok" if self.radio_ok else "MISSING",
                 self.dwell,
