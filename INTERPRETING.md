@@ -23,6 +23,18 @@ Two consequences worth keeping in mind:
 - **Percentages are comparable to each other, not to dBm.** This is a
   relative instrument. That is exactly what you need for "what changed when I
   turned the box on", and not what you need for "how many dBm is my signal".
+- **And they are not flat across the band.** The antenna is not equally
+  efficient everywhere. FlairMesh publish measured figures for an ordinary
+  2.4 GHz PCB antenna — **40% efficient at 2400 MHz rising to 61% at
+  2460–2480**, with a dip again at 2450. That is **1.8 dB of tilt** across the
+  sweep, and this project never characterised the nRF24 module's own antenna.
+
+> **Comparisons between nearby channels are sound. Comparisons between opposite
+> ends of the band carry an unquantified error of a couple of dB.**
+
+  To remove it, put a known source at a fixed distance, sweep it across the band,
+  and record the response. Until someone does, treat cross-band comparisons as
+  indicative rather than measured.
 
 ---
 

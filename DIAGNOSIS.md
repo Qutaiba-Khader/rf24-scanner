@@ -188,6 +188,57 @@ reports *above* or *below* and nothing else.
 a physical test, not another capture. Every occupancy number in this project is a
 duty cycle, never a power level.
 
+### 7a. And the numbers are not flat across the band either
+
+The FlairMesh **FMB100** datasheet publishes the efficiency of an ordinary
+2.4 GHz PCB antenna, measured:
+
+| MHz | Efficiency | Gain |
+|---|---|---|
+| **2400** | **40%** | 1.1 dB |
+| 2410 | 45% | 2.2 dB |
+| 2420 | 52% | 2.2 dB |
+| 2430 | 55% | 2.0 dB |
+| 2440 | 56% | 2.1 dB |
+| 2450 | 53% | 1.4 dB |
+| **2460–2480** | **60–61%** | 2.1–2.7 dB |
+
+That is **1.8 dB worse at the bottom of the band than at the top**, and not
+monotonic — it dips again around 2450.
+
+**The nRF24 module has an antenna too, and this project never characterised it.**
+Every conclusion here compares occupancy at 2415–2429 against occupancy at
+2458–2466 as though the instrument were flat. It is not guaranteed to be.
+
+- If our antenna tilts like this one (worse low), the 2415–2429 block is being
+  **under**-reported and is worse than 41% suggests.
+- If it tilts the other way, part of that 41% is antenna response, not traffic.
+
+**Two caveats now apply to every number in this project, not one:** occupancy is
+a *duty cycle* rather than a power level, **and** it is not calibrated *across
+frequency*. Comparisons between two channels far apart in the band carry an
+unquantified error of a couple of dB.
+
+To remove it: put a known source at a fixed distance, sweep it across the band,
+and record the response. Until then, comparisons between nearby channels are
+sound and comparisons across the band are indicative only.
+
+### 7b. What the FMB100 datasheet is *not*
+
+It is a **BT 5.2 dual-mode component module** (22 × 12 × 2.2 mm, castellated
+pins) for building headsets and accessories: HSP/HFP, A2DP, AVRCP, OPP, SPP, HID,
+GATT. **No LE Audio, no BAP, no Auracast.** It is not the FMA121 and not the
+transmitter in this setup.
+
+One hypothesis from it was checked and **rejected**: the FMB100 splits its power
+as **+13 dBm BR / +6 dBm BLE**, a 7 dB gap that would have explained "Classic
+works, LE Audio fails" as a pure link-budget problem. But the FMA121's own
+specification states **"+15 dBm BR/LE TX power"** — both paths, explicitly. The
+asymmetry does not describe this dongle, so it is not carried forward.
+
+Reference figures from the module, for link-budget arithmetic: **−97 dBm BR
+sensitivity, −100 dBm BLE 1 Mb/s sensitivity, 2.7 dBi peak PCB antenna gain.**
+
 ---
 
 ## 8. Open questions
