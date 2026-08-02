@@ -1,0 +1,7 @@
+# ESP-IDF build output. `idf.py build` regenerates all of it, and sdkconfig is
+# derived from sdkconfig.defaults which IS tracked.
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
