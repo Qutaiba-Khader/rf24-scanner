@@ -1600,7 +1600,11 @@ function detectOccupants(st){
     let lo=c, hi=c;
     for (let k=c-1;k>=0 && mean[k] > Math.max(thr*0.6, local*1.6);k--) lo=k;
     for (let k=c+1;k<NCH && mean[k] > Math.max(thr*0.6, local*1.6);k++) hi=k;
-    if ((hi-lo+1) > 5 || mean[c] <= Math.max(thr, local*2.2 + 4)) continue;
+    // Either a strong ratio above the local background, or a large absolute
+    // margin. Ratio alone fails at the top of the scale: occupancy cannot
+    // exceed 100%, so a gadget sitting on a 45%-busy Wi-Fi carrier can never
+    // reach 2.2x it, and the loudest thing in the room goes unreported.
+    if ((hi-lo+1) > 5 || mean[c] <= Math.max(thr, Math.min(local*2.2 + 4, local + 30))) continue;
     // Only merge with other narrowband finds. Deduping against Wi-Fi too would
     // hide a gadget sitting ON a Wi-Fi channel - which is the case that matters
     // most, since the two then fight over the same slice of spectrum.

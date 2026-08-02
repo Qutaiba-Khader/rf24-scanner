@@ -214,6 +214,8 @@ def main():
     ap.add_argument("--raw", action="store_true")
     ap.add_argument("--save", metavar="FILE")
     ap.add_argument("--compare", nargs=2, metavar=("A", "B"))
+    ap.add_argument("--html", metavar="FILE", help="write a standalone HTML report")
+    ap.add_argument("--open", action="store_true", help="open the HTML report when done")
     args = ap.parse_args()
 
     if args.list:
@@ -234,6 +236,18 @@ def main():
         json.dump({"sweeps": len(frames), "mean": mean_of(frames)},
                   open(args.save, "w"))
         print(f"\nSaved to {args.save}")
+
+    if args.html:
+        if not frames:
+            print("\nNo sweeps, so no report to write.")
+            return 1
+        import report
+        ms = sum(f["ms"] for f in frames) / len(frames)
+        path = report.write(args.html, mean_of(frames), len(frames), ms)
+        print(f"\nReport written to {path}")
+        if args.open:
+            import webbrowser, os
+            webbrowser.open("file:///" + os.path.abspath(path).replace("\\", "/"))
     return 0
 
 
