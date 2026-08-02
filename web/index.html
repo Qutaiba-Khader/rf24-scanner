@@ -96,6 +96,7 @@ header.bar{
 .btn.danger{border-color:rgba(208,59,59,.55)}
 .btn.danger:hover:not(:disabled){background:rgba(208,59,59,.16)}
 .btn.sm{padding:5px 10px;font-size:12px}
+a.btn{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--ink)}
 
 /* ------------------------------------------------------------------ layout */
 main{
@@ -196,6 +197,16 @@ tbody tr:nth-child(even){background:rgba(255,255,255,.028)}
 }
 
 .hidden{display:none !important}
+
+/* -------------------------------------------------------------------- foot */
+.foot{
+  display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  margin:0 14px 18px;padding:13px 14px;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
+}
+.foot .meta{margin-left:auto;font-size:12px;opacity:.95;text-align:right}
+.foot .meta b{font-weight:600}
+@media (max-width:700px){ .foot .meta{margin-left:0;text-align:left;width:100%} }
 .empty{font-size:12px;opacity:.9;padding:8px 0;line-height:1.5}
 .kv{display:flex;justify-content:space-between;font-size:12px;padding:3px 0}
 .kv b{font-weight:600}
@@ -225,8 +236,11 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
   <span class="pill" id="statusPill"><span class="led"></span><span id="statusTxt">Disconnected</span></span>
   <span class="pill"><span class="num" id="statFps">0.0</span>&nbsp;frames/s</span>
   <span class="pill"><span class="num" id="statFrames">0</span>&nbsp;frames</span>
+  <a class="btn" id="btnFw" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/main.py">Get firmware</a>
   <button class="btn primary" id="btnConnect">Connect Pico</button>
-  <button class="btn" id="btnDemo">Demo signal</button>
+  <!-- Hidden by default. Append ?demo=1 to the URL to bring it back for
+       testing the UI with no radio attached. -->
+  <button class="btn hidden" id="btnDemo">Demo signal</button>
 </header>
 
 <main>
@@ -411,6 +425,21 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:13px 0}
   <summary>Serial log</summary>
   <pre id="logBox" class="mono"></pre>
 </details>
+
+<!-- Absolute GitHub URLs, not relative paths: this page is opened both from
+     disk (web/index.html, docs one level up) and from Pages (docs alongside),
+     so a relative link would be broken in one of the two. -->
+<footer class="foot">
+  <a class="btn" href="https://github.com/Qutaiba-Khader/rf24-scanner">GitHub repo</a>
+  <a class="btn" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest/download/main.py">Download firmware</a>
+  <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/blob/main/SETUP.md">Setup guide</a>
+  <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/blob/main/INTERPRETING.md">Reading results</a>
+  <a class="btn sm" href="https://github.com/Qutaiba-Khader/rf24-scanner/releases">All releases</a>
+  <div class="meta">
+    <b>rf24scan</b> &middot; receive only, never transmits<br>
+    Pico + nRF24L01+ &middot; Chrome/Edge/Opera desktop
+  </div>
+</footer>
 </div>
 
 <script>
@@ -833,7 +862,7 @@ function drawBars(){
 
   if (!S.live){
     ctx.fillStyle='#ffffff'; ctx.globalAlpha=.9; ctx.textAlign='center';
-    ctx.fillText('No data yet - connect the Pico or press "Demo signal"', PAD_L+pw/2, top+ph/2);
+    ctx.fillText('No data yet - click "Connect Pico" to start scanning', PAD_L+pw/2, top+ph/2);
     ctx.globalAlpha=1;
     return;
   }
@@ -1182,7 +1211,7 @@ setInterval(()=>{ if (S.frames.length) renderVerdict(); }, 2000);
 
 /* ================================================================= compare */
 function startCapture(which){
-  if (!S.frames.length && !S.demo){ alert('Connect the Pico (or start the demo signal) first.'); return; }
+  if (!S.frames.length && !S.demo){ alert('Connect the Pico first - there is nothing to capture yet.'); return; }
   const secs = +$('rngCapLen').value;
   // In demo mode the synthetic emitter follows the A/B buttons, standing in for
   // you physically unplugging the box. On real hardware you do that yourself.
@@ -1587,13 +1616,20 @@ function paintColorbar(){
 if (!('serial' in navigator)){
   setStatus('Web Serial unavailable','warn');
   log('Web Serial API not detected. Chrome, Edge or Opera on desktop is required for '
-    + 'live capture. Demo mode, session loading and every chart still work here.');
+    + 'live capture. Loading a saved session and every chart still work here.');
 }
+// Demo mode is an escape hatch for exercising the UI with no radio attached,
+// not a headline feature - it only appears with ?demo=1 on the URL.
+if (new URLSearchParams(location.search).has('demo')){
+  $('btnDemo').classList.remove('hidden');
+  log('Demo mode available (?demo=1).');
+}
+
 paintColorbar();
 redrawStatic();
 renderVerdict();
 frameLoop();
-log('Ready. Connect the Pico, or press "Demo signal" to explore the tool with synthetic data.');
+log('Ready. Connect the Pico to start scanning.');
 </script>
 </body>
 </html>

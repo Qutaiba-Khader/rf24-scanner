@@ -35,7 +35,12 @@ nRF24L01+PA+LNA ──SPI0──► Pico ──USB serial──► Chrome ──
 3. **Close Thonny** — one program per serial port.
 4. Double-click `web/index.html`, click **Connect Pico**.
 
-No hardware yet? Open `web/index.html` and click **Demo signal**.
+No hardware yet? Open the tool with **`?demo=1`** on the URL
+(<https://qutaiba-khader.github.io/rf24-scanner/?demo=1>) and click **Demo
+signal** — it synthesises a room with a Wi-Fi AP, BLE beacons, Bluetooth hopping
+and a narrowband emitter at 2441 MHz, so you can practise Compare mode before
+the radio is wired. The button is hidden without that flag to keep the normal
+UI uncluttered.
 
 ## What it does
 
