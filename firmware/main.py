@@ -70,7 +70,7 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 # How long to leave the CPU alone at boot before starting to scan.
 #
@@ -152,6 +152,43 @@ _r = bytearray(2)
 _counts = bytearray(NCH)
 _hexbuf = bytearray(NCH * 2)
 _HEXD = b"0123456789abcdef"
+
+# --------------------------------------------------------- non-blocking stdout
+#
+# MicroPython's USB CDC write BLOCKS once the host stops draining the buffer.
+# A browser tab that gets busy stops reading, the TX buffer fills, and
+# sys.stdout.write() never returns: the scan loop stops dead, the LED stops
+# blinking, and the two ends deadlock each other. The board looks crashed.
+#
+# So: ask whether the host is actually ready before writing, and drop the frame
+# if it is not. Dropping is the right answer here - this is live data and the
+# next sweep is milliseconds away. A backlog of stale sweeps is worth nothing.
+_wpoll = None
+try:
+    _wpoll = select.poll()
+    _wpoll.register(sys.stdout, select.POLLOUT)
+except Exception:
+    _wpoll = None             # not supported on this build; fall back to writing
+
+
+def host_writable():
+    if _wpoll is None:
+        return True
+    try:
+        return bool(_wpoll.poll(0))
+    except Exception:
+        return True
+
+
+def say(text):
+    """Write a line, but never block waiting for a host that is not listening."""
+    if not host_writable():
+        return False
+    try:
+        say(text)
+        return True
+    except Exception:
+        return False
 
 
 def write_reg(reg, val):
@@ -241,6 +278,9 @@ def sweep_pass(counts, lo, hi, dwell):
 
 
 def emit_frame(seq, n, passes, dwell, lo, hi, ms):
+    # Check first: building the hex string is wasted work if nobody is reading.
+    if not host_writable():
+        return False
     hb = _hexbuf
     c = _counts
     j = 0
@@ -249,7 +289,7 @@ def emit_frame(seq, n, passes, dwell, lo, hi, ms):
         hb[j] = _HEXD[(v >> 4) & 0xF]
         hb[j + 1] = _HEXD[v & 0xF]
         j += 2
-    sys.stdout.write(
+    return say(
         "S %d %d %d %d %d %d %s\n"
         % (seq, passes, dwell, ms, lo, hi, bytes(hb[: n * 2]).decode())
     )
@@ -268,10 +308,10 @@ class Scanner:
 
     # ------------------------------------------------------------- reporting
     def banner(self):
-        sys.stdout.write("#rf24scan %s\n" % VERSION)
+        say("#rf24scan %s\n" % VERSION)
 
     def info(self):
-        sys.stdout.write(
+        say(
             "#info radio=%s dwell=%d passes=%d lo=%d hi=%d rate=%s state=%s\n"
             % (
                 "ok" if self.radio_ok else "MISSING",
@@ -290,7 +330,7 @@ class Scanner:
         if self.radio_ok:
             radio_init(self.rate)
         else:
-            sys.stdout.write(
+            say(
                 "#err nRF24 not responding on SPI0 - check CSN=GP5 SCK=GP6 "
                 "MOSI=GP7 MISO=GP4, 3V3 on pin 36, and the 10uF cap\n"
             )
@@ -346,9 +386,9 @@ class Scanner:
                 self.seq = 0
                 self.info()
             else:
-                sys.stdout.write("#err unknown command %r\n" % k)
+                say("#err unknown command %r\n" % k)
         except Exception as e:
-            sys.stdout.write("#err %s: %s\n" % (k, e))
+            say("#err %s: %s\n" % (k, e))
 
 
 def main():
@@ -372,6 +412,7 @@ def main():
     cmdbuf = ""
     last_hb = time.ticks_ms()
     led_state = 0
+    dropped = 0
 
     while True:
         # --- drain any host commands without blocking -----------------------
@@ -392,7 +433,7 @@ def main():
             now = time.ticks_ms()
             if time.ticks_diff(now, last_hb) >= 1000:
                 last_hb = now
-                sys.stdout.write("#hb %d\n" % now)
+                say("#hb %d\n" % now)
                 if not sc.radio_ok:
                     # Keep retrying: the usual cause is a loose jumper or a
                     # brownout, both of which can come good without a reboot.
@@ -416,9 +457,18 @@ def main():
         ms = time.ticks_diff(time.ticks_ms(), t0)
 
         sc.seq += 1
-        emit_frame(sc.seq, n, sc.passes, sc.dwell, lo, hi, ms)
+        if emit_frame(sc.seq, n, sc.passes, sc.dwell, lo, hi, ms):
+            if dropped:
+                # Tell the host it missed data, now that it is listening again.
+                say("#info dropped=%d host_was_not_reading\n" % dropped)
+                dropped = 0
+        else:
+            dropped += 1
         time.sleep_ms(1)
 
+        # Toggle regardless of whether the frame went out, so the LED means
+        # "the scan loop is alive" and nothing else. If it stops, the firmware
+        # stopped - not the USB link.
         if LED is not None:
             led_state ^= 1
             LED(led_state)
@@ -432,7 +482,7 @@ except Exception as _e:       # noqa: BLE001 - deliberately catching everything
     # Say something before falling through to the REPL. A frozen build that
     # dies silently looks exactly like dead hardware from the host side.
     try:
-        sys.stdout.write("#err fatal: %s\n" % _e)
+        say("#err fatal: %s\n" % _e)
     except Exception:
         pass
     raise
