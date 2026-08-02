@@ -70,7 +70,7 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 
 # How long to leave the CPU alone at boot before starting to scan.
 #
@@ -185,7 +185,7 @@ def say(text):
     if not host_writable():
         return False
     try:
-        say(text)
+        sys.stdout.write(text)
         return True
     except Exception:
         return False
