@@ -36,63 +36,71 @@ stresses the front end.
 
 ---
 
-## 1. Flash MicroPython
+## 1. Flash the firmware — one file, one drag
 
-Your board is an **RP2040 Pico**, so you want the `RPI_PICO` build.
-Flashing the Pico 2 (RP2350) build onto an RP2040 fails silently — the board
-just never comes back.
+The `.uf2` already contains **MicroPython and the scanner together**. You do not
+need to install MicroPython separately, and you do not need Thonny.
 
-1. Download the latest `.uf2` from **<https://micropython.org/download/RPI_PICO/>**
+1. Open the web tool and click **Get firmware**, then pick your board:
+   <https://qutaiba-khader.github.io/rf24-scanner/>
+   (or grab it straight from the [latest release](https://github.com/Qutaiba-Khader/rf24-scanner/releases/latest))
+
+   | board | file |
+   |---|---|
+   | Pico (RP2040) | `rf24scan-pico.uf2` |
+   | Pico 2 (RP2350) | `rf24scan-pico2.uf2` |
+   | Pico W / Pico 2 W | `rf24scan-pico_w.uf2` |
+
 2. Unplug the Pico.
-3. Hold the **BOOTSEL** button, plug the USB cable in, then release BOOTSEL.
+3. Hold **BOOTSEL**, plug the USB cable in, then release.
 4. A drive called **RPI-RP2** appears.
-5. Drag the `.uf2` onto it. The drive disconnects and the Pico reboots.
+5. Drag the `.uf2` onto it. The drive disconnects and the board reboots.
 
-That is the only time you need BOOTSEL. From here on it is a normal USB device.
+The onboard LED blinks for about 3 seconds while USB enumerates, then the
+scanner starts. That blink is deliberate — see the troubleshooting note below.
+
+**Not sure which board you have?** In BOOTSEL, open `INFO_UF2.TXT` on the
+RPI-RP2 drive and read `Board-ID`: `RPI-RP2` is a Pico, `RP2350` is a Pico 2.
+Flashing the wrong one does no damage — the board just will not start. Hold
+BOOTSEL again and drag the right file over it.
 
 ---
 
-## 2. Copy the firmware
+## 2. Alternative: run it on stock MicroPython
 
-Pick either route.
+Only if you already run MicroPython, or want to edit the code live.
 
-### Thonny (easiest, has a GUI)
+Flash a stock build from <https://micropython.org/download/RPI_PICO/>, then copy
+`main.py` onto the board:
 
-1. Install **Thonny** — <https://thonny.org>
-2. Bottom-right corner → select **MicroPython (Raspberry Pi Pico)**.
-3. **File → Open** → `firmware/main.py`
-4. **File → Save as… → Raspberry Pi Pico** → name it exactly `main.py`
+**Thonny** — install from <https://thonny.org>, select *MicroPython (Raspberry Pi
+Pico)* bottom-right, open `firmware/main.py`, then **File → Save as… →
+Raspberry Pi Pico** and name it exactly `main.py`.
 
-Named `main.py`, it runs automatically every time the Pico gets power.
-
-### mpremote (command line)
+**mpremote** —
 
 ```powershell
 pip install mpremote
-mpremote connect auto cp C:\Users\qzaid\rf24_scanner\firmware\main.py :main.py
+mpremote connect auto cp firmware\main.py :main.py
 mpremote connect auto reset
 ```
 
----
-
-## 3. ⚠️ Close Thonny before connecting the browser
-
-A serial port can only be held by one program at a time. If Thonny (or any
-terminal) still has the Pico open, the browser's Connect will fail or the port
-will not appear in the picker.
-
-In Thonny: **Run → Stop/Restart**, then close Thonny entirely.
+⚠️ **Close Thonny before connecting the browser.** A serial port can only be held
+by one program at a time; if Thonny still has it open, Connect will fail.
 
 ---
 
-## 4. Open the web tool
+## 3. Open the web tool
 
 Double-click **`web/index.html`**. That is it — no server, no install, nothing
 to build. It works offline and nothing ever leaves your machine.
 
 1. Click **Connect Pico**.
-2. Pick the Pico in the browser's port dialog — on Windows it shows as
-   *USB Serial Device (COMx)*.
+2. Pick it in the browser's dialog. The list is filtered to Raspberry Pi
+   devices, and from v1.0.2 the board identifies itself as
+   **"rf24scan spectrum scanner"** rather than the generic *"Board in FS mode"*
+   every MicroPython board otherwise reports. If your board uses a different USB
+   chip and the list comes up empty, use **Show every device**.
 3. The waterfall starts moving within a second.
 
 **Chrome, Edge or Opera on desktop.** Firefox and Safari do not implement the
@@ -151,10 +159,26 @@ In order of likelihood:
 4. Cold solder joint. Reflow and retry — the firmware retries once a second
    on its own, so a good joint shows up immediately in the log.
 
+**No COM port at all, and Device Manager shows "Unknown USB Device (Device
+Descriptor Request Failed)"**
+
+Fixed in v1.0.1 — update if you are on v1.0.0. A `main.py` frozen into a `.uf2`
+starts running early enough to collide with USB enumeration, and the scan loop
+busy-waited without ever yielding, so the USB stack never got serviced. v1.0.1
+settles for 3 seconds at boot (that is the LED blink) and yields once per pass.
+
+To confirm the board itself is healthy: hold BOOTSEL and plug it in. If the
+**RPI-RP2** drive appears, the cable, port and board are all fine and it is
+purely a firmware problem — reflash.
+
 **The port does not appear in the browser picker**
 
 Thonny or another terminal still holds it. Close them. Failing that, unplug
 and replug the Pico.
+
+A crashed program can leave a serial port wedged — Windows then refuses it with
+*Access is denied* even though nothing visibly holds it. Unplug and replug the
+board; that resets the port and releases the handle.
 
 **Everything reads 100% on every channel**
 
