@@ -1,0 +1,15 @@
+# Normalise to LF in the repository. The CI workflows use bash heredocs
+# (<<'PY'), and a CRLF sneaking into one stops the terminator from matching,
+# which fails in a way that reads like a Python error rather than a line-ending
+# problem. Pin the text types explicitly rather than relying on autodetection.
+* text=auto eol=lf
+
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.py    text eol=lf
+*.html  text eol=lf
+*.md    text eol=lf
+
+*.png   binary
+*.uf2   binary
+*.zip   binary
