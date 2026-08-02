@@ -119,6 +119,15 @@ def main():
     if picks:
         try:
             names = json.loads(picks[-1].read_text(encoding="utf-8"))
+            # Friendly names collected from Home Assistant. Most BLE adverts
+            # carry no name, and the ones that matter carry it in a BLE-5
+            # extended advert the ESP32's 4.2 controller cannot read - so this
+            # is the only way those rows ever get labelled.
+            kd = capdir / "known_devices.json"
+            if kd.is_file():
+                names["known"] = json.loads(kd.read_text(encoding="utf-8"))
+                print(f"   known devices: {len(names['known'])} named "
+                      f"({', '.join(v.get('name','?') for v in names['known'].values())})")
             print(f"\nNamed neighbours: {picks[-1].name} - "
                   f"{len(names.get('wifi', []))} APs, {len(names.get('ble', []))} BLE")
             loud = [a for a in names.get("wifi", []) if a["rssi"] > -64]

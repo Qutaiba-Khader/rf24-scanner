@@ -536,11 +536,20 @@ def named_section(names, atts, suspects):
             f"<td class='mono num'>{a['rssi']} dBm</td>"
             f"<td>{'<span class=who sus>loud enough to see</span>' if vis else '<span class=who ok>below the floor</span>'}</td></tr>")
 
-    for b in ble[:10]:
+    known = (names or {}).get("known") or {}
+    for b in ble[:12]:
         vis = b["rssi"] > RPD_FLOOR_DBM
+        # A name from Home Assistant beats one off the air, because most BLE
+        # adverts carry no name at all - and the ones that matter here carry it
+        # in a BLE-5 extended advert that a 4.2 controller cannot read.
+        k = known.get(b["mac"], {})
+        shown = k.get("name") or b["name"]
+        tail = (f"<span class='mac'>{':'.join(b['mac'][i:i+2] for i in range(0,12,2))}"
+                + (f" &middot; {html.escape(k['vendor'])}" if k.get("vendor") else "")
+                + (" &middot; named in Home Assistant" if k.get("name") else "")
+                + "</span>")
         rows.append(
-            f"<tr><td><b>{html.escape(b['name'] or '(unnamed BLE device)')}</b>"
-            f"<span class='mac'>{':'.join(b['mac'][i:i+2] for i in range(0,12,2))}</span></td>"
+            f"<tr><td><b>{html.escape(shown or '(unnamed BLE device)')}</b>{tail}</td>"
             f"<td class='mono'>BLE</td>"
             f"<td class='mono'>hops 2402&ndash;2480</td>"
             f"<td class='mono num'>{b['rssi']} dBm</td>"
