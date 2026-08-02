@@ -241,10 +241,85 @@ sensitivity, −100 dBm BLE 1 Mb/s sensitivity, 2.7 dBi peak PCB antenna gain.**
 
 ---
 
-## 8. Open questions
+## 8. A way to get real dBm — the BAI interface
+
+The **FMB121** datasheet settles the module question: it is the family behind the
+FMA121 — BT 5.4, TMAP (CT/UMR/BMR) + PBP (Auracast), LC3, aptX adaptive, "super
+low latency gaming mode", 2.7 dBi PCB antenna, ASCII command interface over UART.
+Its published figures are **identical** to the FMA121 product page:
+
+> **+15 dBm BR TX, −97 dBm BR sensitivity · +15 dBm BLE TX, −100.5 dBm BLE 1 Mb/s
+> sensitivity**
+
+That **confirms** the rejection in §7b. BR and BLE transmit at the same power on
+this silicon, so "Classic works, LE Audio fails" is not a link-budget effect. It
+is the retransmission-margin story in §5, and nothing else.
+
+Its antenna table is **byte-identical to the FMB100's** — so the 1.8 dB tilt in
+§7a is FlairMesh's standard PCB antenna response, not a one-off.
+
+### What BAI can measure that the nRF24 cannot
+
+`FlairmeshBAI.pdf` (v2.3, Mar 2026) is the ASCII command interface. Three of its
+messages report **RSSI in real dBm**:
+
+| Command | Reports | Example |
+|---|---|---|
+| `BC:IQ` (Classic inquiry) | `FD=index,addr,RSSI,COD[,name]` | `FD=00,00189600000C,D3,...` → **−45 dBm**, name `iPhone` |
+| `BC:IQ` (LE extended scan) | `FD=index,addrType,addr,RSSI,flags[,name]` | `D8` → **−40 dBm**, name `S23 Ultra`. Threshold settable: `BC:IQ=C4,...` = −60 dBm |
+| `BC:BI` (Auracast scan) | `BI=addrType,addr,RSSI,broadcastIDs,broadcastName` | RSSI per broadcast source |
+
+**This is exactly what our scanner cannot do.** The nRF24 is a 1-bit detector at
+a fixed −64 dBm; it can never say *how strong*, and it can never read a name off
+the air. A BAI-speaking FlairMesh module gives actual dBm **and** the device name
+and Bluetooth address.
+
+It attacks the two limits that currently block this diagnosis:
+
+- **§7's ambiguity** — "we cannot tell −64 dBm from −30 dBm" — becomes a number.
+- **"the radio cannot identify a device by name"** — BAI reports names and
+  addresses directly.
+
+**The limitation that matters: BAI only sees Bluetooth and BLE.** The 2415–2429
+MHz block is a **Wi-Fi access point**, and BAI is blind to it. So this complements
+the nRF24; it does not replace it. Use BAI to quantify the *victims* — the buds,
+the transmitter, the broadcast — and the nRF24 to find the *aggressor*.
+
+`BC:TP` also queries and sets transmit power (`DefaultTx,MaximumTx,InquiryTx`, hex
+dBm). The document warns: *"It is recommended to only decrease the power below the
+default values which have been fully verified for FCC/CE/BQB approvement."* So
+treat it as a **read** command — useful for confirming what the dongle is actually
+radiating.
+
+### A useful negative result
+
+**BAI has no retransmission, RTN, reliability, channel-map or AFH command
+anywhere.** The complete Auracast *transmitter* message set is: `BN` (broadcast
+name), `BE` (encryption code), `BI` (broadcast IDs), `BF` (manufacturer data).
+Nothing about quality or latency.
+
+So **FlooCast's broadcast latency control uses a private mechanism, and FlooCast
+is the only way to change it.** Do not go looking for an AT command that does not
+exist.
+
+### Caution before poking the dongle
+
+The FMA121 exposes a *virtual COM device* over USB-C, which is very likely this
+same BAI interface — but that is inference, not documentation. Writing
+configuration to it could misconfigure the dongle.
+
+**Query first, never write:** `BC:TP`, `BC:AD`, `BC:BI`. FlooCast stays the
+supported path for anything that changes behaviour.
+
+---
+
+## 9. Open questions
 
 - **Who owns 2415–2429 MHz?** Untested: Android TV box, TV, second AP, neighbour.
 - **Does the clean-room test still stutter?** Not yet run. This is the decisive one.
 - **Does raising RTN in FlooCast fix Auracast?** Not yet tried.
 - **The mouse dongle's own frequency** was never identified — it is the second
   victim in the original brief and has had no capture pair of its own.
+- **How strong is the 2415–2429 block in dBm?** The nRF24 cannot say, and BAI
+  cannot see Wi-Fi. Answering this needs a real spectrum analyser or a TinySA.
+- **Is the nRF24's antenna flat across the band?** Never characterised — §7a.
