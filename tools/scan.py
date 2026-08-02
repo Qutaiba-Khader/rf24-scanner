@@ -66,8 +66,13 @@ def collect(port, seconds, raw=False):
     ser = serial.Serial(port, 115200, timeout=0.5)
     time.sleep(0.3)
     ser.reset_input_buffer()
-    # The firmware stays silent until the host speaks, so say hello first.
+    # The firmware stays silent until the host speaks, so say hello first - then
+    # explicitly RESUME. We halt the board on disconnect (so it does not stream
+    # into a closed port), which means it is still halted when we come back.
     ser.write(b"?\n")
+    time.sleep(0.2)
+    ser.write(b"G\n")
+    time.sleep(0.2)
 
     frames, control = [], []
     t0 = time.time()
@@ -227,6 +232,8 @@ def main():
     ap.add_argument("--raw", action="store_true")
     ap.add_argument("--save", metavar="FILE")
     ap.add_argument("--compare", nargs=2, metavar=("A", "B"))
+    ap.add_argument("--label", metavar="TEXT",
+                    help='what was powered on/off for this capture, e.g. "FancyLEDs box ON"')
     ap.add_argument("--html", metavar="FILE", help="write a standalone HTML report")
     ap.add_argument("--open", action="store_true", help="open the HTML report when done")
     args = ap.parse_args()
@@ -249,6 +256,14 @@ def main():
         json.dump({"sweeps": len(frames), "mean": mean_of(frames)},
                   open(args.save, "w"))
         print(f"\nSaved to {args.save}")
+
+    # Record it on the timeline. This is what turns "something is on 2462 MHz"
+    # into "the FancyLEDs box is on 2462 MHz" - the radio supplies the
+    # frequency, the label supplies the name.
+    if frames and (args.label or args.save):
+        import timeline
+        n = timeline.append(mean_of(frames), len(frames), args.label, args.save)
+        print(f"Timeline entry #{n}: {args.label or '(unlabelled)'}")
 
     if args.html:
         if not frames:

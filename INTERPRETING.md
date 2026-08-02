@@ -137,49 +137,59 @@ room. Export each as CSV to keep them.
 
 ---
 
-## Your case: earbuds AND a mouse dongle both dropping out
+## ⚠️ The single most important rule: take the scanner TO the suspect
 
-Two different victims failing is more informative than one, so use it.
+**Within 10–20 cm.** Not across the room.
+
+This is not a nicety. On 2026-08-02 a Tuya LED controller was measured **three
+separate times from across the room and showed nothing at all** — it was
+formally cleared as innocent. Moved to 10 cm, the same box took **2415 MHz from
+1.3% to 56%**.
+
+Nothing changed except distance. The RPD threshold is a hard −64 dBm, and at
+normal room distances a small gadget simply falls under it.
+
+> **A quiet reading from across the room is not evidence of a quiet device.**
+
+### The second rule: repeat every trial
+
+Two 25-second captures produced clusters in **different places** and were
+reported as "likely". A 60-second capture then showed nothing at all — both had
+been noise.
+
+- **60 seconds minimum** (~146 sweeps)
+- **Repeat every off/on cycle at least once**
+- A finding that does not survive a repeat is not a finding
 
 ### What the two victims tell you
 
 | Victim | What it is on air | What kills it |
 |---|---|---|
 | Earbuds | Bluetooth/BLE, hops across 2402–2480 with AFH | **Wideband** noise — it leaves nowhere to hop |
-| Mouse dongle | Proprietary 2.4 GHz, narrow, fixed or small hop set | **Anything loud on its channels**, narrow or wide |
+| Mouse dongle | Proprietary 2.4 GHz, narrow, fixed or small hop set | **Anything loud on its channels** |
 
-Bluetooth actively dodges busy channels. So if your **earbuds** are struggling,
-the aggressor is probably **wide** — because a narrow one is exactly what AFH is
-built to route around. A single LED remote parked on one channel is unlikely to
-be the whole story.
+Bluetooth actively dodges busy channels, so if the **earbuds** are struggling the
+aggressor is probably **wide** — a narrow one is exactly what AFH routes around.
 
-That both victims fail points the same way. Start with the wideband suspects.
+### What was actually found in this room
 
-### The prime suspect, given these two symptoms
+| Device | Band | nRF ch | Adds | Confidence |
+|---|---|---|---|---|
+| **FancyLEDs box (Tuya)** | 2414–2430 MHz | ch 14–30 | +22 | 99% |
+| **Xbox** | 2414–2430 MHz | ch 14–30 | +30 in use / +6 idle | 98% |
+| Galaxy Buds + transmitter | 2458–2466 MHz | ch 58–66 | +5 | 53% |
+| Unidentified | 2417–2428 MHz | ch 17–28 | 21% | untested |
 
-**USB 3.0 radiated noise.** USB 3 ports, cables and external SSDs emit broadband
-noise straight across 2.4 GHz — Intel published a whitepaper on this exact
-effect. It fits your symptoms unusually well:
+**The mechanism is not a frequency clash.** The buds sit 28 MHz clear of the
+interferers. But Bluetooth hops across all 79 channels, and the Xbox and LED box
+sit *inside* that hop range — taking **17 of the 79** away permanently. Fewer
+channels means more retries, and retries are what you hear as a dropout.
 
-- It is **wideband**, so it defeats Bluetooth AFH → earbuds suffer.
-- Your mouse dongle is plugged **into the PC**, centimetres from the noise
-  source → dongle suffers.
-- It only appears when the port is active, which is why the problem
-  "starts randomly" and seems to come and go.
-
-Test it in two minutes, before building any fingerprint library:
-
-1. Put the scanner next to the PC's USB ports.
-2. **Capture A** with the external drive/hub unplugged and idle.
-3. **Capture B** with it plugged in and copying a large file.
-
-A broad lift across many channels confirms it. The fix is free: move the dongle
-onto a short USB **2.0** extension cable, away from the case and away from any
-USB 3 port.
+The Xbox costing +30 in use and only +6 idle is why the problem comes and goes.
 
 ### Building a fingerprint library
 
-If USB 3 is not it, work through the room one device at a time:
+Work through the room one device at a time:
 
 1. Baseline the room with everything you can switch off, off.
 2. For each suspect — the FancyLEDs box, the router, a smart plug, a camera, a
@@ -205,35 +215,36 @@ changes when your earbuds are off, they are not the ones filling it.
 
 Ordered by how much they typically buy you.
 
-**1. Move the transmitter, not the headphones.**
-Put the dongle or transmitter on a short USB extension away from the PC case.
-This is usually the single biggest win, because of:
+**1. Separate the interferers from the transmitter.**
+Distance is the cheapest fix and by far the most effective — signal falls off
+fast, which is the same physics that made the LED box invisible from across the
+room. Move whichever you need least: the transmitter away from the offending
+corner, or the offenders away from where you listen.
 
-**2. USB 3.0 is a broadband 2.4 GHz noise source.**
-USB 3.0 ports, cables and enclosures radiate right across the band. It is a
-documented effect (Intel published a whitepaper on it) and it is very commonly
-the real cause. If your dongle is next to a USB 3 port or an external SSD, move
-it — or use a USB 2.0 port, which does not do this.
+**2. Power the worst offender off while listening.**
+If it is something like a games console whose output jumps when in use, a
+switched socket or simply turning it off during listening removes the problem
+entirely.
 
 **3. Set your router's Wi-Fi channel by hand.**
-The verdict panel names the quietest of 1/6/11 from your own measurements. Set
-it explicitly. **Do not leave it on "auto"** — auto re-picks on its own
-schedule and will silently undo your work.
+The report names the quietest of 1/6/11 from your own measurements. Set it
+explicitly. **Do not leave it on "auto"** — auto re-picks on its own schedule
+and will silently undo your work.
 
-**4. Move your Wi-Fi to 5 GHz where you can.**
-It vacates the band rather than competing for it. The single most effective
-change if your devices support it.
+**4. Deal with any always-on emitter you identified.**
+A cheap LED controller transmits continuously even when idle. Options: relocate
+it, put it on a switched socket, or replace it with a Zigbee equivalent.
 
-**5. Deal with the narrowband emitter you found.**
-Once Compare mode names it, options are: relocate it, put it on a switched
-socket so it is off when you are listening, or replace it with a Zigbee or
-Wi-Fi equivalent that behaves better. Many cheap LED controllers transmit
-continuously even when idle.
-
-**6. Keep line of sight.**
+**5. Keep line of sight.**
 Your own body between transmitter and headphones costs more signal than most
-interference does. If dropouts correlate with you turning around, that is what
-is happening, and no amount of channel tuning will fix it.
+interference does. If dropouts correlate with you turning around, no amount of
+channel tuning will fix it.
+
+**6. Only then look at exotic causes.**
+Broadband emitters like USB 3.0 ports, unshielded SSD enclosures or microwave
+ovens can flood the band — but check them *after* you have power-cycled the
+devices actually in the room. Measure before you theorise; this project lost
+hours to a suspect that turned out not to exist in the setup at all.
 
 ### Why a narrow interferer hurts less than you would expect
 

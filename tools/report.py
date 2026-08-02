@@ -12,6 +12,7 @@ Used by tools/scan.py --html report.html
 """
 
 import html
+import math
 import time
 
 NCH = 126
@@ -140,28 +141,59 @@ def audio_verdict(a):
             f"is intermittent - run a longer scan while the problem is happening.")
 
 
-def advice(a):
+def advice(a, attributions=None, suspects=None):
+    """Built from THIS room's measurements, not from a generic checklist.
+
+    Everything below names a device that was actually identified by switching
+    it off and on, and the frequencies it was measured on.
+    """
     out = []
-    if a["widest"] >= 12:
-        out.append(("The interference is <b>wideband</b>, and that is the kind "
-                    "that hurts audio", "A wide block leaves Bluetooth nowhere "
-                    "to hop. Narrow interferers it can dodge; this it cannot."))
-    out.append(("Suspect USB 3.0 first",
-                "USB 3.0 ports, cables and external drives radiate broadband "
-                "noise straight across 2.4 GHz. It is wideband, so it defeats "
-                "adaptive hopping, and your dongle is usually plugged in right "
-                "next to it. Move the dongle to a <b>USB 2.0</b> port on a short "
-                "extension cable, away from the case."))
-    out.append(("Set your Wi-Fi channel by hand",
-                "Pick the quietest of 1/6/11 from the table below and set it "
-                "explicitly. Do not leave the router on <i>auto</i> - it will "
-                "re-pick on its own schedule and undo the change."))
-    out.append(("Move Wi-Fi to 5 GHz where you can",
-                "That vacates the band rather than competing for it. Usually the "
-                "single most effective change."))
-    out.append(("Keep line of sight",
-                "Your own body between the earbuds and the transmitter costs "
-                "more signal than most interference does."))
+    found = [x for x in (attributions or [])
+             if x["verdict"] in ("confirmed", "weak") and x["bands"]]
+    found.sort(key=lambda x: -max(b["avg"] for b in x["bands"]))
+
+    for i, dev in enumerate(found):
+        b = max(dev["bands"], key=lambda z: z["avg"])
+        lo, hi = MHZ(b["lo"]), MHZ(b["hi"])
+        width = b["hi"] - b["lo"] + 1
+        name = dev["name"].split("(")[0].strip()
+        if i == 0:
+            out.append((f"{name} is the biggest source in this room",
+                        f"Measured at <b>{lo}&ndash;{hi} MHz</b> ({width} channels), adding "
+                        f"<b>{b['avg']:+.0f} points</b> of occupancy when switched on. "
+                        f"Move it as far from your earbuds and their transmitter as the "
+                        f"cabling allows, or power it off while you are listening. "
+                        f"Distance is the cheapest fix there is - the signal falls off "
+                        f"fast, which is exactly why it was invisible from across the room."))
+        else:
+            out.append((f"{name} stacks on the same frequencies",
+                        f"Also at <b>{lo}&ndash;{hi} MHz</b>, adding <b>{b['avg']:+.0f} "
+                        f"points</b> on top. Two transmitters sharing one block is worse "
+                        f"than either alone - separate them, or remove whichever you need "
+                        f"least while listening."))
+
+    if len(found) >= 2:
+        allb = [b for d in found for b in d["bands"]]
+        lo, hi = MHZ(min(b["lo"] for b in allb)), MHZ(max(b["hi"] for b in allb))
+        n = max(b["hi"] for b in allb) - min(b["lo"] for b in allb) + 1
+        out.append(("Together they take the bottom of the Bluetooth band",
+                    f"<b>{lo}&ndash;{hi} MHz</b> is roughly {n} of the 79 channels your "
+                    f"earbuds can hop through, occupied continuously. Bluetooth dodges "
+                    f"narrow interference easily; it cannot dodge a block this wide. "
+                    f"That is the mechanism behind your dropouts."))
+
+    for s in suspects or []:
+        out.append((f"Something still unidentified sits at {MHZ(s['lo'])}&ndash;{MHZ(s['hi'])} MHz",
+                    f"Running at <b>{s['level']:.0f}%</b> with everything identified so far "
+                    f"switched off. Next to test, in order: "
+                    f"{'; '.join(c.split('(')[0].strip() for c in s['candidates'])}. "
+                    f"Power one off, scan, power it on, scan."))
+
+    if a["usable"] < a["total"]:
+        out.append(("How much room your earbuds actually have left",
+                    f"<b>{a['usable']} of {a['total']}</b> Bluetooth channels are clear "
+                    f"enough to hop into right now. Every device you remove from the list "
+                    f"above gives that number back."))
     return out
 
 
@@ -206,6 +238,47 @@ padding:15px 16px;margin-bottom:14px}
 .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;margin:0 0 10px}
 .legend span{display:inline-flex;align-items:center;gap:6px}
 .legend i{width:11px;height:11px;border-radius:2px;flex:none}
+.who{font-size:10px;padding:1px 6px;border-radius:4px;margin-left:6px;
+text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+.who.ok{background:rgba(12,163,12,.22);border:1px solid var(--good)}
+.who.maybe{background:rgba(250,178,25,.18);border:1px solid var(--warning)}
+.who.sus{background:rgba(213,81,129,.20);border:1px solid #d55181}
+.susp{color:#d55181}
+.dev{margin:1px 0}
+.map{position:relative;margin:10px 0 4px}
+.rowlab{font-size:12.5px;margin:14px 0 4px;display:flex;gap:8px;
+align-items:baseline;flex-wrap:wrap}
+.rowlab b{font-size:13.5px}
+.rowlab span{opacity:.9;font-family:ui-monospace,Consolas,monospace;font-size:11px}
+.track{position:relative;height:26px;background:var(--surface2);
+border:1px solid var(--border);border-radius:5px}
+.blk{position:absolute;top:0;bottom:0;border-radius:4px;display:grid;
+place-items:center;font-size:11px;font-weight:700;color:#000;overflow:hidden;
+white-space:nowrap}
+.hop{position:absolute;top:0;bottom:0;border-radius:4px;
+background:repeating-linear-gradient(115deg,rgba(25,158,112,.42) 0 6px,transparent 6px 12px);
+border:1px dashed rgba(25,158,112,.75)}
+.zone{position:absolute;top:0;bottom:26px;background:rgba(208,59,59,.13);
+border-left:2px solid var(--critical);border-right:2px solid var(--critical);
+pointer-events:none;z-index:3}
+.zone b{position:absolute;top:-2px;left:50%;transform:translateX(-50%);
+background:var(--critical);color:#fff;font-size:10px;padding:2px 8px;
+border-radius:0 0 5px 5px;white-space:nowrap;letter-spacing:.04em}
+.ruler{position:relative;height:22px;margin-top:6px}
+.ruler i{position:absolute;top:0;font-style:normal;font-size:10px;
+transform:translateX(-50%);font-family:ui-monospace,Consolas,monospace;opacity:.9}
+.ruler i::before{content:'';position:absolute;top:-6px;left:50%;width:1px;
+height:5px;background:#555}
+.key{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;margin-top:16px}
+.key span{display:inline-flex;align-items:center;gap:6px}
+.key i{width:12px;height:12px;border-radius:3px;flex:none}
+table.sum{margin:4px 0 10px}
+table.sum th{white-space:nowrap}
+table.sum td{vertical-align:top}
+table.sum .unk{display:block;font-size:11px;margin-top:2px;max-width:26ch}
+.amt{font-size:11px;opacity:.9;font-variant-numeric:tabular-nums}
+.alsohere{margin-top:3px;font-size:12px}
+.unk{opacity:.75;font-size:12px}
 table{border-collapse:collapse;width:100%;font-size:13px;margin-top:4px}
 th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--border)}
 th{font-size:11px;text-transform:uppercase;letter-spacing:.08em;opacity:.95}
@@ -216,6 +289,29 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 color:#fff;display:grid;place-items:center;font-weight:700;font-size:12px}
 .tip .bd b{display:block;font-size:13.5px}
 .tip .bd p{margin:3px 0 0;font-size:12.5px;opacity:.97}
+.att{display:flex;gap:0;overflow:hidden;border:1px solid var(--border);
+border-radius:9px;margin-top:10px;background:var(--surface2)}
+.att .attbar{width:5px;flex:none;background:var(--axis)}
+.att.good .attbar{background:var(--good)}
+.att.warning .attbar{background:var(--warning)}
+.att.serious .attbar{background:var(--critical)}
+.att.info .attbar{background:var(--b1)}
+.att .attbody{padding:11px 14px 12px}
+.att .attbody > b{display:block;font-size:15px;margin-top:3px}
+.att .freq{font-size:13px;margin-top:4px;
+font-family:ui-monospace,Consolas,monospace}
+.att .attbody p{margin:6px 0 0;font-size:12.5px;opacity:.97;max-width:70ch}
+.att .retract{margin-top:7px;font-size:12px;padding:7px 9px;border-radius:6px;
+background:rgba(208,59,59,.13);border:1px solid rgba(208,59,59,.35)}
+.conf{display:flex;align-items:center;gap:9px;margin-top:9px;font-size:12px}
+.conf .cbar{width:190px;height:9px;border-radius:5px;background:var(--surface);
+border:1px solid var(--border);overflow:hidden;flex:none}
+.conf .cbar i{display:block;height:100%;background:var(--good)}
+.att.warning .conf .cbar i{background:var(--warning)}
+.conf .cnum{font-weight:700;font-size:14px;font-variant-numeric:tabular-nums}
+.cands{margin-top:9px;font-size:12.5px}
+.cands ol{margin:5px 0 6px;padding-left:20px}
+.cands li{margin:2px 0}
 .note{font-size:12.5px;opacity:.95;margin-top:12px;padding-top:12px;
 border-top:1px solid var(--border)}
 """
@@ -232,9 +328,346 @@ def bar_row(label, pct, tag, colour=None):
             f'<span class="t">{html.escape(tag)}</span></div>')
 
 
-def build(mean, meta):
+def clusters_between(off, on, floor=1.5, minrun=3):
+    """Adjacent channels that rose together. A real transmitter occupies a
+    contiguous block; scattered single channels are noise however big they look."""
+    risen = {c for c in range(NCH) if (on[c] - off[c]) >= floor}
+    runs, cur = [], []
+    for c in range(NCH):
+        if c in risen:
+            cur.append(c)
+        elif cur:
+            runs.append(cur); cur = []
+    if cur:
+        runs.append(cur)
+    return [{"lo": r[0], "hi": r[-1], "n": len(r),
+             "avg": sum(on[c] - off[c] for c in r) / len(r)}
+            for r in runs if len(r) >= minrun]
+
+
+def attribute(name, runs):
+    """Judge one device from one or more off/on trials.
+
+    runs = [(off_mean, on_mean), ...]. Confidence comes from REPLICATION: a
+    cluster that appears once is a coincidence candidate, one that appears in
+    every trial at the same frequency is the device.
+    """
+    per_run = [clusters_between(off, on) for off, on in runs]
+    if not any(per_run):
+        return {"name": name, "verdict": "not-detected", "bands": [], "runs": len(runs),
+                "why": "No contiguous cluster appeared in any trial. Either it is not "
+                       "transmitting on 2.4 GHz, it is below the -64 dBm floor at this "
+                       "distance, or it only transmits in short bursts."}
+
+    # A band counts as replicated only if some cluster overlaps it in EVERY run.
+    def overlaps(a, b):
+        return not (a["hi"] < b["lo"] - 1 or b["hi"] < a["lo"] - 1)
+
+    replicated = []
+    for cand in per_run[0]:
+        matches = [cand]
+        for others in per_run[1:]:
+            m = [o for o in others if overlaps(cand, o)]
+            if not m:
+                matches = None
+                break
+            matches.append(max(m, key=lambda x: x["avg"]))
+        if matches:
+            lo = min(m["lo"] for m in matches)
+            hi = max(m["hi"] for m in matches)
+            replicated.append({"lo": lo, "hi": hi,
+                               "avg": sum(m["avg"] for m in matches) / len(matches)})
+
+    dropped = [c for c in per_run[0] if not any(
+        overlaps(c, r) for r in replicated)] if len(runs) > 1 else []
+
+    if not replicated:
+        return {"name": name, "verdict": "not-replicated", "bands": [], "runs": len(runs),
+                "dropped": dropped,
+                "why": "A cluster appeared in one trial but not the others, so it cannot "
+                       "be attributed to this device. Most likely something else nearby "
+                       "transmitted during that window."}
+
+    strong = max(r["avg"] for r in replicated)
+    verdict = "confirmed" if (strong >= 6 and len(runs) > 1) else "weak"
+    conf = confidence(strong, len(runs))
+    return {"name": name, "verdict": verdict, "bands": replicated, "runs": len(runs),
+            "dropped": dropped, "confidence": conf,
+            "why": ("Appeared at the same frequencies in every trial and is far clear of "
+                    "the noise." if verdict == "confirmed" else
+                    "Appeared at the same frequencies in every trial, but the change is "
+                    "small. Real, but not yet conclusive - capture for longer, and make "
+                    "the device actually busy while you do.")}
+
+
+# Run-to-run variation measured across this session's captures: repeating the
+# same measurement moves a channel by roughly +/-3 points. Everything below is
+# scaled against that, so the number means something instead of being a vibe.
+NOISE_POINTS = 3.0
+
+
+def confidence(avg_rise, trials):
+    """A rough, honest percentage: how far above noise, times how often it repeated.
+
+    Deliberately caps at 99. A 1-bit energy detector can never prove WHICH box
+    made a signal - only that the signal follows that box's power switch.
+    """
+    if avg_rise <= 0 or trials <= 0:
+        return 0
+    z = (avg_rise / NOISE_POINTS) * math.sqrt(trials)
+    return int(min(99, round(100 * (1 - math.exp(-z / 2)))))
+
+
+VERDICT_STYLE = {
+    "confirmed":      ("good",     "IDENTIFIED"),
+    "weak":           ("warning",  "LIKELY - needs a longer capture"),
+    "not-replicated": ("serious",  "NOT REPLICATED - retracted"),
+    "not-detected":   ("info",     "NOT DETECTED"),
+}
+
+
+WIFI_CH = {k: (12 + 5 * (k - 1) - 10, 12 + 5 * (k - 1) + 10) for k in range(1, 14)}
+
+
+def wifi_at(c):
+    return [k for k, (lo, hi) in WIFI_CH.items() if lo <= c <= hi]
+
+
+def wifi_span(lo, hi):
+    ks = sorted({k for c in range(lo, hi + 1) for k in wifi_at(c)})
+    return ", ".join(str(k) for k in ks) if ks else "&mdash;"
+
+
+MAP_LO, MAP_HI = 0, 85               # 2400-2485 MHz drawing window
+MAP_SPAN = MAP_HI - MAP_LO + 1
+
+
+def _x(c):
+    return (c - MAP_LO) / MAP_SPAN * 100
+
+
+def interception_map(atts, suspects):
+    """One picture: who sits where, and where they land on the earbuds.
+
+    The point it has to make is that this is NOT a frequency clash. The
+    interferers sit inside Bluetooth's hop range, so the collision happens in
+    TIME as the buds hop through them, not because they share a channel.
+    """
+    rows = []
+    for a in atts or []:
+        if a["verdict"] not in ("confirmed", "weak") or not a["bands"]:
+            continue
+        b = max(a["bands"], key=lambda z: z["avg"])
+        victim = "Buds" in a["name"]
+        rows.append({"name": a["name"], "lo": b["lo"], "hi": b["hi"], "avg": b["avg"],
+                     "conf": a["confidence"], "victim": victim,
+                     "colour": "#199e70" if victim
+                     else ("#d03b3b" if b["avg"] >= 20 else "#fab219")})
+    for s in suspects or []:
+        rows.append({"name": "Unidentified", "lo": s["lo"], "hi": s["hi"],
+                     "avg": s["level"], "conf": None, "victim": False,
+                     "colour": "#d55181"})
+    if not rows:
+        return ""
+
+    attackers = [r for r in rows if not r["victim"]]
+    if not attackers:
+        return ""
+    zlo = min(r["lo"] for r in attackers)
+    zhi = max(r["hi"] for r in attackers)
+    stolen = len([c for c in range(zlo, zhi + 1) if BT_LO <= c <= BT_HI])
+
+    out = []
+    zl, zw = _x(zlo), _x(zhi + 1) - _x(zlo)
+    out.append(f"<div class='zone' style='left:{zl:.2f}%;width:{zw:.2f}%'>"
+               f"<b>COLLISION &mdash; {stolen} of 79 channels taken</b></div>")
+
+    # The victim's full playground first.
+    bl, bw = _x(BT_LO), _x(BT_HI + 1) - _x(BT_LO)
+    out.append("<div class='rowlab'><b style='color:#199e70'>Your earbuds need ALL "
+               "of this</b><span>2402&ndash;2480 MHz &middot; ch 2&ndash;80 &middot; "
+               "79 channels, hopping 1600&times;/sec</span></div>")
+    out.append(f"<div class='track'><div class='hop' "
+               f"style='left:{bl:.2f}%;width:{bw:.2f}%'></div></div>")
+
+    for r in sorted(rows, key=lambda x: (x["victim"], -x["avg"])):
+        conf = (f" &middot; {r['conf']}% confident" if r["conf"] is not None
+                else " &middot; untested")
+        amt = "where they were measured" if r["victim"] else f"+{r['avg']:.0f} points"
+        l, w = _x(r["lo"]), _x(r["hi"] + 1) - _x(r["lo"])
+        out.append(f"<div class='rowlab'><b>{html.escape(r['name'])}</b>"
+                   f"<span>{MHZ(r['lo'])}&ndash;{MHZ(r['hi'])} MHz &middot; "
+                   f"ch {r['lo']}&ndash;{r['hi']} &middot; {amt}{conf}</span></div>")
+        out.append(f"<div class='track'><div class='blk' style='left:{l:.2f}%;"
+                   f"width:{w:.2f}%;background:{r['colour']}'>"
+                   f"{MHZ(r['lo'])}-{MHZ(r['hi'])}</div></div>")
+
+    ticks = "".join(f"<i style='left:{_x(c):.2f}%'>{MHZ(c)}</i>"
+                    for c in range(0, 86, 10))
+    out.append(f"<div class='ruler'>{ticks}</div>")
+
+    return (
+        "<div class='map'>" + "".join(out) + "</div>"
+        "<div class='key'>"
+        "<span><i style='background:#199e70'></i>your earbuds (the victim)</span>"
+        "<span><i style='background:#d03b3b'></i>strong interferer</span>"
+        "<span><i style='background:#fab219'></i>weaker interferer</span>"
+        "<span><i style='background:#d55181'></i>unidentified</span></div>"
+        f"<div class='note'><b>This is not a frequency clash.</b> The interferers sit "
+        f"at {MHZ(zlo)}&ndash;{MHZ(zhi)} MHz and your earbuds were measured well away "
+        f"from that. But Bluetooth does not stay put &mdash; it hops across all 79 "
+        f"channels 1600 times a second, and those interferers sit <b>inside the hop "
+        f"range</b>. Every pass through ch {zlo}&ndash;{zhi} lands on them, so adaptive "
+        f"hopping blacklists those channels and your earbuds work with about "
+        f"<b>{79 - stolen} of 79</b> instead of the full set. Fewer channels means more "
+        f"retries, and retries are what you hear as a dropout.</div>")
+
+
+def summary_table(atts, suspects, mean):
+    """The one table that answers everything at a glance."""
+    rows = []
+    for a in atts or []:
+        if a["verdict"] not in ("confirmed", "weak") or not a["bands"]:
+            continue
+        b = max(a["bands"], key=lambda z: z["avg"])
+        lo, hi = b["lo"], b["hi"]
+        peak = max(mean[c] for c in range(lo, hi + 1))
+        blocks = len([c for c in range(lo, hi + 1) if 2 <= c <= 80])
+        cls = "ok" if a["verdict"] == "confirmed" else "maybe"
+        rows.append((b["avg"],
+                     f"<tr><td><b>{html.escape(a['name'])}</b></td>"
+                     f"<td class='num'>{MHZ(lo)}&ndash;{MHZ(hi)} MHz</td>"
+                     f"<td class='num'>ch {lo}&ndash;{hi}</td>"
+                     f"<td class='num'>{hi-lo+1}</td>"
+                     f"<td class='num'>{wifi_span(lo, hi)}</td>"
+                     f"<td class='num'><b>{blocks}</b> of 79</td>"
+                     f"<td class='num'>+{b['avg']:.0f}</td>"
+                     f"<td class='num'>{peak:.0f}%</td>"
+                     f"<td class='num'><span class='who {cls}'>{a['confidence']}%</span></td>"
+                     f"<td class='num'>{a['runs']}</td></tr>"))
+    for s in suspects or []:
+        lo, hi = s["lo"], s["hi"]
+        blocks = len([c for c in range(lo, hi + 1) if 2 <= c <= 80])
+        rows.append((-1,
+                     f"<tr><td><b class='susp'>Unidentified</b><br>"
+                     f"<span class='unk'>"
+                     + html.escape(", ".join(c.split("(")[0].strip()
+                                             for c in s["candidates"])) + "</span></td>"
+                     f"<td class='num'>{MHZ(lo)}&ndash;{MHZ(hi)} MHz</td>"
+                     f"<td class='num'>ch {lo}&ndash;{hi}</td>"
+                     f"<td class='num'>{hi-lo+1}</td>"
+                     f"<td class='num'>{wifi_span(lo, hi)}</td>"
+                     f"<td class='num'><b>{blocks}</b> of 79</td>"
+                     f"<td class='num'>&mdash;</td>"
+                     f"<td class='num'>{s['level']:.0f}%</td>"
+                     f"<td class='num'><span class='who sus'>untested</span></td>"
+                     f"<td class='num'>0</td></tr>"))
+    if not rows:
+        return ""
+    body = "".join(r[1] for r in sorted(rows, key=lambda x: -x[0]))
+    return (
+        "<table class='sum'><thead><tr>"
+        "<th>Device</th><th class='num'>Frequency band</th><th class='num'>nRF ch</th>"
+        "<th class='num'>Width</th><th class='num'>Wi-Fi ch</th>"
+        "<th class='num'>Blocks</th><th class='num'>Adds</th>"
+        "<th class='num'>Peak</th><th class='num'>Confidence</th><th class='num'>Trials</th>"
+        "</tr></thead><tbody>" + body + "</tbody></table>"
+        "<div class='note'><b>nRF ch</b> = the scanner's own channel numbering, "
+        "channel N = 2400+N MHz. <b>Width</b> = how many channels wide, which is "
+        "also its width in MHz. <b>Blocks</b> = how many of the 79 channels "
+        "Bluetooth hops through this device takes away. <b>Adds</b> = extra "
+        "occupancy measured when it is switched on. <b>Peak</b> = highest single "
+        "channel in that band.</div>")
+
+
+def attribution_html(atts):
+    if not atts:
+        return ""
+    rows = []
+    for a in atts:
+        cls, badge = VERDICT_STYLE[a["verdict"]]
+        pct = a.get("confidence", 0)
+        bands = ", ".join(
+            f"<b>{MHZ(b['lo'])}&ndash;{MHZ(b['hi'])} MHz</b> ({b['avg']:+.1f})"
+            for b in a["bands"]) or "&mdash;"
+        extra = ""
+        if a.get("dropped"):
+            d = ", ".join(f"{MHZ(x['lo'])}&ndash;{MHZ(x['hi'])} MHz" for x in a["dropped"])
+            extra = (f"<div class='retract'>Seen once at {d} but not on repeat &mdash; "
+                     f"<b>retracted</b>.</div>")
+        meter = ""
+        if a["verdict"] in ("confirmed", "weak"):
+            meter = (f"<div class='conf'><div class='cbar'><i style='width:{pct}%'></i></div>"
+                     f"<span class='cnum'>{pct}%</span> confident this is the named device</div>")
+        rows.append(
+            f"<div class='att {cls}'><div class='attbar'></div><div class='attbody'>"
+            f"<span class='lab'>{badge} &middot; {a['runs']} trial{'s' if a['runs']!=1 else ''}</span>"
+            f"<b>{html.escape(a['name'])}</b>"
+            f"<div class='freq'>{bands}</div>{meter}"
+            f"<p>{a['why']}</p>{extra}</div></div>")
+    return "".join(rows)
+
+
+def suspects_html(suspects):
+    """Bands with real traffic that no device has claimed yet, plus who to test."""
+    if not suspects:
+        return ""
+    out = []
+    for s in suspects:
+        cands = "".join(f"<li>{html.escape(c)}</li>" for c in s["candidates"])
+        out.append(
+            f"<div class='att serious'><div class='attbar'></div><div class='attbody'>"
+            f"<span class='lab'>UNCLAIMED &middot; not yet power-cycled</span>"
+            f"<b>{MHZ(s['lo'])}&ndash;{MHZ(s['hi'])} MHz &mdash; {s['level']:.0f}% busy</b>"
+            f"<p>{s['note']}</p>"
+            f"<div class='cands'>Suspects, in the order I would test them:"
+            f"<ol>{cands}</ol>"
+            f"Power one off, scan, power it on, scan. Whichever one moves these "
+            f"frequencies owns them.</div></div></div>")
+    return "".join(out)
+
+
+def named_channels(attributions):
+    """channel -> LIST of (name, verdict, avg), strongest first.
+
+    A channel can carry several transmitters at once - the Xbox and the
+    FancyLEDs box share 2414-2430 here. An earlier version kept only the
+    strongest claim per channel, which silently deleted the other device from
+    the table and made it look like it had been dropped from the report.
+    """
+    out = {}
+    for a in attributions or []:
+        if a["verdict"] not in ("confirmed", "weak"):
+            continue
+        for b in a["bands"]:
+            for c in range(b["lo"], b["hi"] + 1):
+                out.setdefault(c, []).append((a["name"], a["verdict"], b["avg"]))
+    for c in out:
+        out[c].sort(key=lambda x: -x[2])
+    return out
+
+
+def short_name(name):
+    """Trim a label to something that fits beside a bar."""
+    n = name.split("(")[0].strip()
+    return n if len(n) <= 30 else n[:29] + "…"
+
+
+def build(mean, meta, attributions=None, suspects=None):
     a = analyse(mean)
     sev, title, body = audio_verdict(a)
+    # Needed by both the busiest-channels table and the spectrum rows below,
+    # so it has to exist before either is built.
+    named = named_channels(attributions)
+
+    # Channels inside an unclaimed band get tagged SUSPECT with the shortlist,
+    # so the candidates appear ON the frequencies rather than only in a panel
+    # further down the page.
+    suspected = {}
+    for s in suspects or []:
+        short = " / ".join(c.split("(")[0].strip() for c in s["candidates"][:3])
+        for c in range(s["lo"], s["hi"] + 1):
+            suspected.setdefault(c, short)
 
     # AFH headroom gauge - one tick per Bluetooth channel.
     ticks = "".join(
@@ -242,9 +675,27 @@ def build(mean, meta):
         for c in range(BT_LO, BT_HI + 1))
 
     ranked = sorted(range(NCH), key=lambda i: -mean[i])[:12]
+    def who(c):
+        # A channel can hold BOTH an identified device and a residual that
+        # survives with that device switched off. Showing only the first would
+        # hide the second transmitter, which is the one still to be found.
+        parts = []
+        for nm, verdict, avg in named.get(c, []):
+            badge = ("<span class='who ok'>identified</span>" if verdict == "confirmed"
+                     else "<span class='who maybe'>likely</span>")
+            parts.append(f"<div class='dev'><b>{html.escape(short_name(nm))}</b> "
+                         f"{badge} <span class='amt'>+{avg:.0f}</span></div>")
+        if c in suspected:
+            parts.append(f"<div class='alsohere'><b class='susp'>+ also "
+                         f"{html.escape(suspected[c])}</b>"
+                         f"<span class='who sus'>suspect</span></div>")
+        return "".join(parts) or "<span class='unk'>not yet identified</span>"
+
     rows = "".join(
-        f"<tr><td class='num'>{MHZ(c)} MHz</td><td class='num'>ch {c}</td>"
+        f"<tr><td class='num'>{MHZ(c)} MHz</td><td class='num'>{c}</td>"
+        f"<td class='num'>{', '.join(str(k) for k in wifi_at(c)) or '—'}</td>"
         f"<td class='num'>{mean[c]:.0f}%</td>"
+        f"<td>{who(c)}</td>"
         f"<td>{html.escape(', '.join(bands_at(c)) or '—')}</td></tr>"
         for c in ranked if mean[c] >= 1)
 
@@ -278,6 +729,20 @@ def build(mean, meta):
 
     def row_for(c):
         tag = ", ".join(bands_at(c))
+        # A device you identified beats a generic protocol label - that is the
+        # whole point of the power-cycling exercise.
+        if c in named:
+            devs = named[c]
+            mark = "◄ " + " + ".join(
+                short_name(n) + ("" if v == "confirmed" else " (likely)") for n, v, _ in devs)
+            if c in suspected:
+                mark += " + SUSPECT: " + suspected[c]
+            allconf = all(v == "confirmed" for _n, v, _a in devs)
+            return bar_row(f"{MHZ(c)} MHz", mean[c], mark,
+                           "#0ca30c" if allconf else "#fab219")
+        if c in suspected:
+            return bar_row(f"{MHZ(c)} MHz", mean[c],
+                           "◄ SUSPECT: " + suspected[c], "#d55181")
         if c in narrow:
             return bar_row(f"{MHZ(c)} MHz", mean[c],
                            "◄ FIXED-FREQUENCY DEVICE" + (f" — {tag}" if tag else ""),
@@ -292,16 +757,17 @@ def build(mean, meta):
 
     legend = (
         '<div class="legend">'
-        '<span><i style="background:#d03b3b"></i>fixed-frequency device — '
-        'the thing to hunt down</span>'
-        '<span><i style="background:#ec835a"></i>wideband — this is what starves '
-        'Bluetooth of room to hop</span>'
+        '<span><i style="background:#0ca30c"></i>identified device</span>'
+        '<span><i style="background:#fab219"></i>likely device (needs another trial)</span>'
+        '<span><i style="background:#d55181"></i>SUSPECT — unclaimed, power-cycle to identify</span>'
+        '<span><i style="background:#d03b3b"></i>fixed-frequency emitter — unidentified</span>'
+        '<span><i style="background:#ec835a"></i>wideband — starves Bluetooth of room to hop</span>'
         '<span><i style="background:#3987e5"></i>ordinary traffic</span></div>')
 
     tips = "".join(
         f'<div class="tip"><div class="k">{i}</div><div class="bd">'
         f'<b>{t}</b><p>{d}</p></div></div>'
-        for i, (t, d) in enumerate(advice(a), 1))
+        for i, (t, d) in enumerate(advice(a, attributions, suspects), 1))
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -327,6 +793,11 @@ def build(mean, meta):
 </section>
 
 <section class="card">
+  <h2>Where everything sits, and where they collide</h2>
+  {interception_map(attributions, suspects)}
+</section>
+
+<section class="card">
   <h2>Room left for Bluetooth to hop</h2>
   <p style="margin:0 0 4px;font-size:13px">Each mark is one of the {a['total']}
     channels Bluetooth hops across. <b style="color:var(--good)">Green</b> is
@@ -335,6 +806,18 @@ def build(mean, meta):
   <div class="gauge">{ticks}</div>
   <div class="lab">{a['usable']} of {a['total']} usable &middot;
     2402&ndash;2480 MHz &middot; in-band average {a['inband']:.1f}%</div>
+</section>
+
+<section class="card">
+  <h2>Which device is which</h2>
+  <p class="caption" style="margin-top:0">The radio only ever reports
+    <i>"something is on this frequency"</i> &mdash; it cannot read a name off the
+    air. Names come from switching a device off and on and seeing which
+    frequencies move with it. Confidence comes from <b>repeating</b> that: a
+    cluster seen once may be a neighbour, one seen every time is the device.</p>
+  {summary_table(attributions, suspects, mean)}
+  {attribution_html(attributions)}
+  {suspects_html(suspects)}
 </section>
 
 <section class="card">
@@ -349,9 +832,14 @@ def build(mean, meta):
 
 <section class="card">
   <h2>Busiest channels</h2>
-  <table><thead><tr><th class="num">Frequency</th><th class="num">Channel</th>
-    <th class="num">Busy</th><th>Belongs to</th></tr></thead>
-    <tbody>{rows or '<tr><td colspan=4>Nothing above 1%.</td></tr>'}</tbody></table>
+  <table><thead><tr><th class="num">Frequency</th><th class="num">nRF ch</th>
+    <th class="num">Wi-Fi ch</th><th class="num">Busy</th><th>Device</th>
+    <th>Protocol space</th></tr></thead>
+    <tbody>{rows or '<tr><td colspan=6>Nothing above 1%.</td></tr>'}</tbody></table>
+  <div class="note">A device name here means you switched that device off and on
+    and these frequencies moved with it. <b>Not yet identified</b> means real
+    traffic whose owner has not been established &mdash; power-cycle a suspect
+    while scanning and it will be named.</div>
 </section>
 
 <section class="card">

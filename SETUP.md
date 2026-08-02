@@ -47,7 +47,7 @@ need to install MicroPython separately, and you do not need Thonny.
 
    | board | file |
    |---|---|
-   | Pico (RP2040) | `rf24scan-pico.uf2` |
+   | Pico (RP2040) | `rf24scan-pico.uf2` (or the versioned `rf24scan-pico-vX.Y.Z.uf2`) |
    | Pico 2 (RP2350) | `rf24scan-pico2.uf2` |
    | Pico W / Pico 2 W | `rf24scan-pico_w.uf2` |
 
@@ -120,6 +120,28 @@ trusted origin. Same tool, same behaviour.
 
 ---
 
+## 4. ⚠️ Where you put the scanner decides everything
+
+**Take it to within 10–20 cm of whatever you are testing.**
+
+The nRF24's detector has a hard **−64 dBm** threshold. Anything weaker simply
+does not exist to it. A Tuya LED controller was measured **three times from
+across the room and showed nothing** — it was written off as innocent. Moved to
+10 cm, the same box took 2415 MHz from **1.3% to 56%**.
+
+> A quiet reading from across the room is not evidence of a quiet device.
+
+Two more rules that come from the same session:
+
+- **60 seconds per capture minimum** (~146 sweeps). Two 25-second runs produced
+  clusters in *different* places, and both were noise.
+- **Repeat every off/on trial.** A finding that does not survive a repeat is not
+  a finding.
+- **Never move the scanner between an off and an on capture** — you would be
+  measuring your own hand.
+
+---
+
 ## 5. Try it with no hardware first
 
 Click **Demo signal**. It synthesises a plausible room — a Wi-Fi access point
@@ -162,10 +184,16 @@ In order of likelihood:
 **No COM port at all, and Device Manager shows "Unknown USB Device (Device
 Descriptor Request Failed)"**
 
-Fixed in v1.0.1 — update if you are on v1.0.0. A `main.py` frozen into a `.uf2`
-starts running early enough to collide with USB enumeration, and the scan loop
-busy-waited without ever yielding, so the USB stack never got serviced. v1.0.1
-settles for 3 seconds at boot (that is the LED blink) and yields once per pass.
+**Fixed in v1.1.1 — every release before it is broken.** The sweep ran inside
+`@micropython.native`, and the MicroPython docs state the background scheduler
+is *not run* during native code. TinyUSB was starved on every pass, so the board
+enumerated at boot and then died the instant scanning began.
+
+⚠️ **Check which file you actually flashed.** Your browser saves every download
+under the same name, so `rf24scan-pico.uf2` in Downloads is probably your
+*first* one. Look for `rf24scan-pico (N).uf2` with the highest N, or use the
+versioned `rf24scan-pico-vX.Y.Z.uf2` asset. This exact trap caused nine
+pointless reflashes of a broken build.
 
 To confirm the board itself is healthy: hold BOOTSEL and plug it in. If the
 **RPI-RP2** drive appears, the cable, port and board are all fine and it is
