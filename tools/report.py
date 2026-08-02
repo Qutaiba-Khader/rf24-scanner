@@ -728,18 +728,38 @@ def zigbee_section(names, block=(15, 29)):
                  f"<span class='mac'>{html.escape(v.get('vendor',''))}</span></td>"
                  f"<td class='mono'>Zigbee hub</td><td class='mono'>&mdash;</td></tr>")
 
-    # Which default Zigbee channels land inside the measured block.
+    # A hub's ACTUAL channel, once someone has read it, beats any list of
+    # defaults - and it can rule the hub out entirely.
+    actual = {}
+    for v in known.values():
+        if v.get("zigbee_channel") is not None:
+            actual[v.get("name", "")] = v["zigbee_channel"]
+
     chrows = ""
-    for label, chans in (("Philips Hue Bridge", [11, 15, 20, 25]),
-                         ("Samsung SmartThings", [14, 15, 19, 20, 25])):
-        cells = []
-        for k in chans:
-            f, lo, hi = zigbee_ch(k)
+    for label, chans, key in (
+            ("Philips Hue Bridge", [11, 15, 20, 25], "Hue Bridge"),
+            ("Samsung SmartThings", [14, 15, 19, 20, 25], "Samsung TV hub")):
+        got = next((c for n, c in actual.items() if key in n), None)
+        if got is not None:
+            f, lo, hi = zigbee_ch(got)
             inside = not (hi < blo or lo > bhi)
-            cells.append(f"<b style='color:{'var(--critical)' if inside else 'var(--ink)'}'>"
-                         f"ch {k} = {f} MHz{' &#9664; INSIDE' if inside else ''}</b>")
-        chrows += (f"<tr><td><b>{label}</b></td>"
-                   f"<td>{' &middot; '.join(cells)}</td></tr>")
+            verdict = ("<b style='color:var(--critical)'>INSIDE the block</b>" if inside
+                       else "<b style='color:var(--good)'>RULED OUT &mdash; outside "
+                            f"{blo}&ndash;{bhi} MHz</b>")
+            chrows += (f"<tr><td><b>{label}</b></td>"
+                       f"<td><b>Measured: channel {got} = {f} MHz</b> "
+                       f"({lo}&ndash;{hi} MHz) &mdash; {verdict}</td></tr>")
+        else:
+            cells = []
+            for k in chans:
+                f, lo, hi = zigbee_ch(k)
+                inside = not (hi < blo or lo > bhi)
+                cells.append(
+                    f"<b style='color:{'var(--critical)' if inside else 'var(--ink)'}'>"
+                    f"ch {k} = {f} MHz{' &#9664; possible' if inside else ''}</b>")
+            chrows += (f"<tr><td><b>{label}</b></td>"
+                       f"<td><i>not read yet</i> &mdash; defaults: "
+                       f"{' &middot; '.join(cells)}</td></tr>")
 
     return f"""
 <section class="card">
@@ -770,26 +790,28 @@ def zigbee_section(names, block=(15, 29)):
   </table>
 
   <div class="elim">
-    <b>This closes every open question in this report.</b>
+    <b>Hue is ruled out &mdash; and that matters, because it was the best
+    hypothesis this report had.</b>
     <ul>
-      <li>The block was present in <b>every</b> capture and never moved with any
-          Wi-Fi device &mdash; because it was never Wi-Fi.</li>
-      <li>No access point on Wi-Fi channels 1&ndash;6 exceeds &minus;85 dBm, and
-          no transmitter of any kind exceeds &minus;81 dBm &mdash; confirmed by
-          two independent scans.</li>
-      <li>It reads <b>1.4% at the desk</b> and <b>21&ndash;41% near the TV</b>
-          &mdash; Zigbee transmits at about 0 dBm, so it is short range.</li>
-      <li>Switching the &ldquo;LED box&rdquo; off moved this band by
-          <b>+22 points</b> &mdash; those are <b>Hue lightstrips</b>. Turning
-          them off cut the Zigbee traffic. It was never a Tuya device.</li>
+      <li>The Hue Bridge was read directly: <b>Zigbee channel 25 = 2475 MHz</b>.
+          The block being hunted is <b>2415&ndash;2429 MHz</b>. They do not
+          overlap at all, so this network is <b>not</b> its source.</li>
+      <li>It does still take Bluetooth channels 72&ndash;74 of 79 &mdash; real,
+          but three channels, not the fifteen at issue here.</li>
+      <li><b>The Samsung SmartThings hub has not been read.</b> Its defaults
+          include channel 14 (2420 MHz) and 15 (2425 MHz), both inside the
+          block. That is the one still open.</li>
     </ul>
+    What survives untouched is the <b>elimination</b> itself: no access point,
+    and no transmitter of any kind, on Wi-Fi channels 1&ndash;6 exceeds
+    &minus;81 dBm. Whatever owns 2415&ndash;2429 MHz still announces itself to
+    nothing, and still lives near the TV rather than at the desk.
   </div>
 
-  <p class="note"><b>What to check:</b> Hue app &rarr; Settings &rarr; Hue Bridge
-    &rarr; Zigbee channel. If it reads <b>15</b> (2425 MHz) or <b>14</b> (2420 MHz),
-    that is the interferer. Move it to <b>channel 25 (2475 MHz)</b> or
-    <b>20 (2450 MHz)</b>, both outside {blo}&ndash;{bhi}&nbsp;MHz. Check the
-    SmartThings hub in the Samsung app the same way.</p>
+  <p class="note"><b>Still to check:</b> the <b>SmartThings hub inside the
+    Samsung TV</b> &mdash; SmartThings app &rarr; hub &rarr; Zigbee channel. If it
+    reads <b>14</b> or <b>15</b>, that is the remaining candidate. The Hue Bridge
+    has already been read and is clear.</p>
 </section>"""
 
 
