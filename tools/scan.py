@@ -94,6 +94,19 @@ def collect(port, seconds, raw=False):
         if done != last and not raw:
             last = done
             print(f"  ...{done}/{seconds}s, {len(frames)} sweeps", end="\r", flush=True)
+
+    # Tell the board to stop before letting go of the port. MicroPython's CDC
+    # write BLOCKS once nothing is draining, so a board still streaming into a
+    # closed port stalls its own USB stack - and the next attempt to open the
+    # port then hangs. Halting first is the difference between a clean
+    # disconnect and having to replug the board.
+    try:
+        ser.write(b"H\n")
+        ser.flush()
+        time.sleep(0.3)
+        ser.reset_input_buffer()
+    except Exception:
+        pass
     ser.close()
     print(" " * 60, end="\r")
     return frames, control
@@ -241,9 +254,12 @@ def main():
         if not frames:
             print("\nNo sweeps, so no report to write.")
             return 1
-        import report
+        # Aliased: a bare `import report` here binds the name `report` locally
+        # for the whole function, which shadows the module-level report()
+        # function above and makes calling it an UnboundLocalError.
+        import report as html_report
         ms = sum(f["ms"] for f in frames) / len(frames)
-        path = report.write(args.html, mean_of(frames), len(frames), ms)
+        path = html_report.write(args.html, mean_of(frames), len(frames), ms)
         print(f"\nReport written to {path}")
         if args.open:
             import webbrowser, os

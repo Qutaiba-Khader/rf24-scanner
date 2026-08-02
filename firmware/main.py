@@ -83,7 +83,7 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 # How long to leave the CPU alone at boot before starting to scan.
 #
@@ -274,17 +274,28 @@ def radio_init(rate_idx):
 
 # Yield to the scheduler every N channels while sweeping.
 #
-# time.sleep_us() is a BUSY-WAIT - it does not yield. A full pass busy-waits
-# 126 x 200us = ~25ms solid, and with only one yield per pass TinyUSB gets
-# serviced about 2% of the time. On RP2 that is enough to kill the USB stack:
-# micropython/micropython#6853 (a while-True in main.py makes the board vanish
-# from the port list) and #8904 (a looping script saved as main.py locks up,
-# while the same code run over mpremote is fine). Yielding every few channels
-# costs ~16ms per pass and keeps USB alive.
+# time.sleep_us() is a BUSY-WAIT and does not yield, so a pass would otherwise
+# hold the CPU for ~25ms solid. Yielding every few channels lets TinyUSB run.
 YIELD_EVERY = 8
 
 
-@micropython.native
+# *** DO NOT PUT @micropython.native BACK ON THIS FUNCTION ***
+#
+# It was here from v1.0.0 and it is what broke USB for nine releases.
+#
+# From the MicroPython docs (reference/speed_python.html): "The background
+# scheduler is NOT RUN during execution of native code... long running native
+# functions should call time.sleep(0) periodically, which will run the
+# scheduler."
+#
+# The whole 126-channel sweep ran inside a native function, so the scheduler -
+# and therefore TinyUSB - was suspended for the entire pass, every pass. The
+# board enumerated, then died the moment scanning began. Worse, the yields
+# added above did nothing while the decorator was present, because the
+# scheduler does not run inside native code at all.
+#
+# The decorator was never worth much here anyway: the 200us PLL dwell dominates
+# this loop, so the interpreter is not the bottleneck. See the module docstring.
 def sweep_pass(counts, lo, hi, dwell):
     """One visit to every channel in [lo, hi]. Increments counts in place."""
     csn = CSN

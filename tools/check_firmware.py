@@ -81,6 +81,24 @@ def main(argv):
                 problems.append(f"{path}:{node.lineno} {fn.name}() calls itself "
                                 f"(infinite recursion)")
 
+
+    # @micropython.native SUSPENDS THE BACKGROUND SCHEDULER for the whole
+    # function (docs: reference/speed_python.html). The 126-channel sweep ran
+    # inside one, so TinyUSB was starved for every pass and USB died the moment
+    # scanning began. It cost nine releases to find. Never again.
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for dec in node.decorator_list:
+                name = ""
+                if isinstance(dec, ast.Attribute):
+                    name = dec.attr
+                elif isinstance(dec, ast.Name):
+                    name = dec.id
+                if name in ("native", "viper"):
+                    problems.append(
+                        f"{path}:{node.lineno} {node.name}() uses @micropython.{name}, "
+                        f"which suspends the scheduler and starves USB")
+
     module_names = collect_module_names(tree)
     for fn in funcs:
         known = module_names | local_names(fn)

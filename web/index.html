@@ -918,6 +918,10 @@ async function connect(showAll){
 async function disconnect(){
   log('Disconnecting…');
   clearTimeout(S.silenceTimer);
+  // Halt the board BEFORE dropping the port. MicroPython's CDC write blocks
+  // once nothing is draining it, so a board left streaming into a closed port
+  // stalls its own USB stack and the next connect attempt hangs.
+  try { await send('H'); await new Promise(r=>setTimeout(r,150)); } catch(e){}
   readLoopAlive = false;
   try{ if (reader) await reader.cancel(); }catch(e){}
   try{ if (writer){ writer.releaseLock(); writer=null; } }catch(e){}
