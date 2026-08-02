@@ -68,7 +68,19 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
+
+# How long to leave the CPU alone at boot before starting to scan.
+#
+# When this file is FROZEN into a .uf2 it starts running far earlier than a
+# main.py sitting on the filesystem does - early enough to overlap the host's
+# USB enumeration. The sweep loop busy-waits in sleep_us() about a thousand
+# times per frame and never yields, so TinyUSB goes unserviced and the descriptor
+# request times out. Windows reports that as:
+#     Unknown USB Device (Device Descriptor Request Failed)
+# and no COM port ever appears. Standing still for a moment first lets
+# enumeration finish; the yields in the main loop keep it alive afterwards.
+BOOT_SETTLE_MS = 3000
 
 # ------------------------------------------------------------------ wiring
 PIN_CE, PIN_CSN = 2, 5
@@ -338,6 +350,16 @@ class Scanner:
 
 
 def main():
+    # Let USB enumerate before this loop takes the CPU. See BOOT_SETTLE_MS.
+    # sleep_ms yields to the scheduler (and therefore to TinyUSB); sleep_us
+    # below ~1ms is a busy-wait and does not.
+    if LED is not None:
+        for _ in range(BOOT_SETTLE_MS // 250):
+            LED(1); time.sleep_ms(125)
+            LED(0); time.sleep_ms(125)
+    else:
+        time.sleep_ms(BOOT_SETTLE_MS)
+
     sc = Scanner()
     sc.banner()
     sc.self_test()
@@ -385,14 +407,30 @@ def main():
         t0 = time.ticks_ms()
         for _ in range(sc.passes):
             sweep_pass(_counts, lo, hi, sc.dwell)
+            # One yield per pass (~1 ms on a ~40 ms pass, so ~2% of the time)
+            # keeps the USB stack serviced. Without it a long frame can starve
+            # TinyUSB badly enough to drop the connection mid-session.
+            time.sleep_ms(1)
         ms = time.ticks_diff(time.ticks_ms(), t0)
 
         sc.seq += 1
         emit_frame(sc.seq, n, sc.passes, sc.dwell, lo, hi, ms)
+        time.sleep_ms(1)
 
         if LED is not None:
             led_state ^= 1
             LED(led_state)
 
 
-main()
+try:
+    main()
+except KeyboardInterrupt:
+    pass                      # Ctrl-C from a terminal: drop to the REPL on purpose
+except Exception as _e:       # noqa: BLE001 - deliberately catching everything
+    # Say something before falling through to the REPL. A frozen build that
+    # dies silently looks exactly like dead hardware from the host side.
+    try:
+        sys.stdout.write("#err fatal: %s\n" % _e)
+    except Exception:
+        pass
+    raise
