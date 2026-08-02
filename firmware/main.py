@@ -83,7 +83,7 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.0.8"
+VERSION = "1.0.9"
 
 # How long to leave the CPU alone at boot before starting to scan.
 #
@@ -440,8 +440,25 @@ def main():
 
     while True:
         # --- drain any host commands without blocking -----------------------
+        # poll() returns a list of (object, event) pairs. Testing it for mere
+        # TRUTHINESS is a trap: with no host holding the port open, the USB CDC
+        # reports POLLHUP/POLLERR, which is a NON-EMPTY list. The old code took
+        # that as "data is waiting" and called sys.stdin.read(1), which blocks
+        # forever on a stream that will never produce a byte.
+        #
+        # That is the real "LED flutters for 3 seconds then goes dark": the
+        # flutter finishes, the main loop runs its first poll, and the board
+        # wedges on the very first read. It has been there since v1.0.0 and
+        # survived several fixes aimed at the wrong layer.
+        #
+        # So: only read when POLLIN is actually set.
         guard = 0
-        while poller.poll(0) and guard < 128:
+        while guard < 128:
+            events = poller.poll(0)
+            if not events:
+                break
+            if not any(ev & select.POLLIN for _obj, ev in events):
+                break                      # hangup/error only - nothing to read
             guard += 1
             ch = sys.stdin.read(1)
             if not ch:
