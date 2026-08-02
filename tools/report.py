@@ -529,6 +529,7 @@ def named_section(names, atts, suspects):
             f"<tr><td><b>{html.escape(a['ssid'] or '(hidden network)')}</b>"
             f"<span class='mac'>{':'.join(a['bssid'][i:i+2] for i in range(0,12,2))}"
             f" &middot; {AUTH_NAMES[a['auth']] if a['auth'] < len(AUTH_NAMES) else a['auth']}"
+            f"{' &middot; ' + html.escape(a['vendor']) if a.get('vendor') else ''}"
             f"</span></td>"
             f"<td class='mono'>Wi-Fi ch {a['ch']}</td>"
             f"<td class='mono'>{MHZ(lo)}&ndash;{MHZ(hi)} MHz</td>"
@@ -609,6 +610,76 @@ def named_section(names, atts, suspects):
     second. This table says <i>who</i> is there; only the nRF24 says <i>how much</i>
     of the air they take. Both radios must sit in the same place for the two sets
     of numbers to combine.</p>
+</section>"""
+
+
+def promisc_section(names):
+    """Who is actually USING the air, as opposed to merely being present.
+
+    A Wi-Fi scan sees beacons, so a saturating access point and an idle one look
+    identical. Monitor mode counts real frames and bytes per TRANSMITTER, which
+    is the only way this project can measure airtime rather than presence.
+    """
+    rows_in = (names or {}).get("promisc") or []
+    if not rows_in:
+        return ""
+
+    total = sum(r["bytes"] for r in rows_in) or 1
+    rows = []
+    for r in sorted(rows_in, key=lambda x: -x["bytes"]):
+        share = r["bytes"] / total * 100
+        vis = r["rssi"] > RPD_FLOOR_DBM
+        if r.get("randomised"):
+            who = "<span class='mac'>locally-administered address &mdash; virtual or randomised, names nothing</span>"
+        elif r.get("vendor"):
+            who = f"<b>{html.escape(r['vendor'])}</b>"
+        else:
+            who = "<span class='mac'>vendor not in the OUI registry</span>"
+        rows.append(
+            f"<tr><td class='mono'>{':'.join(r['mac'][i:i+2] for i in range(0,12,2))}"
+            f"<span class='mac'>Wi-Fi ch {r['ch']} &middot; {r['data']} data, "
+            f"{r['mgmt']} mgmt</span></td>"
+            f"<td>{who}</td>"
+            f"<td class='mono num'>{r['rssi']} dBm</td>"
+            f"<td class='num'>{r['bytes']:,}</td>"
+            f"<td class='num'>{share:.0f}%</td>"
+            f"<td>{'<span class=who sus>yes</span>' if vis else '<span class=who ok>no</span>'}</td>"
+            f"</tr>")
+
+    loud = [r for r in rows_in if r["rssi"] > RPD_FLOOR_DBM]
+    low = [r for r in rows_in if r["ch"] <= 6]
+    lowmax = max((r["rssi"] for r in low), default=None)
+
+    note = ""
+    if lowmax is not None:
+        note = (f"<div class='elim'><b>On Wi-Fi channels 1&ndash;6 the strongest "
+                f"transmitter of any kind is {lowmax} dBm.</b> The scanner cannot "
+                f"detect anything below &minus;64 dBm, so <b>no Wi-Fi device down "
+                f"there &mdash; access point or client &mdash; can be producing the "
+                f"energy measured at 2415&ndash;2429&nbsp;MHz.</b> This is a second, "
+                f"independent confirmation of the elimination above, and it now "
+                f"covers clients as well as access points.</div>")
+
+    lab = html.escape(names.get("promisc_label", ""))
+    return f"""
+<section class="card">
+  <h2>Who is actually using the air</h2>
+  <p class="caption" style="margin-top:0">A Wi-Fi scan sees <b>beacons</b>, so a
+    saturating access point and an idle one look identical. Monitor mode counts
+    real <b>frames and bytes per transmitter</b> &mdash; airtime, not presence.
+    The address here is the device that transmitted, not the network it belongs
+    to, and its first three bytes name the manufacturer. Captured {lab}.</p>
+  <table class="tab">
+    <thead><tr><th>Transmitter</th><th>Made by</th><th class="num">Signal</th>
+      <th class="num">Bytes</th><th class="num">Share</th>
+      <th>Scanner can see it?</th></tr></thead>
+    <tbody>{''.join(rows)}</tbody>
+  </table>
+  <p class="note">{len(loud)} of {len(rows_in)} transmitters are above the
+    scanner&rsquo;s &minus;64 dBm floor. A <b>locally-administered</b> address
+    (second character 2, 6, a or e) is virtual or randomised and its vendor
+    prefix means nothing &mdash; those rows are marked rather than guessed at.</p>
+  {note}
 </section>"""
 
 
@@ -1144,6 +1215,8 @@ def build(mean, meta, attributions=None, suspects=None, names=None):
 </section>
 
 {named_section(names, attributions, suspects)}
+
+{promisc_section(names)}
 
 <section class="card">
   <h2>Which device is which</h2>
