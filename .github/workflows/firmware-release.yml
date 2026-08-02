@@ -79,9 +79,12 @@ jobs:
               exit 1
             fi
           done
-          # UF2 magic word at the start of every block (little-endian 0x0A324655)
-          head -c 4 "$BUILD/firmware.uf2" | xxd -p | grep -qi '55463200' \
-            || { echo "::error::not a valid UF2 file"; exit 1; }
+          # UF2 first magic word is 0x0A324655, which little-endian lands on disk
+          # as the bytes 55 46 32 0A ("UF2\n") - note the trailing 0a, not 00.
+          MAGIC=$(head -c 4 "$BUILD/firmware.uf2" | xxd -p)
+          echo "UF2 magic bytes: $MAGIC"
+          [ "$MAGIC" = "5546320a" ] \
+            || { echo "::error::not a valid UF2 file (expected 5546320a, got $MAGIC)"; exit 1; }
           echo "UF2 magic OK"
 
       # Deliberately NO tag in the filename: releases/latest/download/<name>
