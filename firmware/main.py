@@ -64,6 +64,10 @@ SERIAL PROTOCOL  (USB CDC, line oriented, 8N1, baud irrelevant)
     B<n>         RX bandwidth 0=250kbps 1=1Mbps 2=2Mbps (default 1)
                  3=cycle - rotate all three, one per frame, so the same
                  scene is measured at every bandwidth near-simultaneously
+    M<n>         0 = sweep (measure energy), 1 = SNIFF (read packets)
+                 Sniff listens for nRF24-family traffic - most cheap wireless
+                 mice, keyboards, LED remotes and doorbells use these chips.
+                 Emits: N <ch> <64 hex chars>
     T            re-run the radio self-test
     Z            reset sequence counter
 
@@ -88,7 +92,7 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # How long to leave the CPU alone at boot before starting to scan.
 #
@@ -112,6 +116,11 @@ SPI_BAUD = 8_000_000          # nRF24L01+ tolerates 10 MHz; 8 leaves margin
 REG_CONFIG = 0x00
 REG_EN_AA = 0x01
 REG_EN_RXADDR = 0x02
+REG_SETUP_AW = 0x03
+REG_RX_ADDR_P0 = 0x0A
+REG_RX_PW_P0 = 0x11
+REG_FIFO_STATUS = 0x17
+CMD_R_RX_PAYLOAD = 0x61
 REG_SETUP_RETR = 0x04
 REG_RF_CH = 0x05
 REG_RF_SETUP = 0x06
@@ -242,6 +251,83 @@ def command(cmd):
     CSN(0)
     SPI_BUS.write(bytes((cmd,)))
     CSN(1)
+
+
+# --------------------------------------------------------------- sniff mode
+#
+# The RPD tells you a channel is BUSY. It can never tell you what is on it.
+# But a great many cheap 2.4 GHz gadgets - wireless mice and keyboards, LED
+# remotes, RF doorbells - use the nRF24 family or a clone of it, and this radio
+# can be coaxed into receiving their packets.
+#
+# The trick (Travis Goodspeed's): set the address width to its "illegal" 2-byte
+# setting and listen for an address of 0x00AA, which is really the tail of the
+# preamble. Anything transmitting nearby then looks like a packet whose payload
+# is the rest of the real frame. With CRC off, nothing is rejected.
+#
+# *** THIS IS STILL RECEIVE-ONLY. The one thing that could break that is
+# *** EN_AA: auto-acknowledge makes the chip TRANSMIT an ack for every packet
+# *** it accepts. It is written to 0 here as well as in radio_init, because in
+# *** this mode the chip would otherwise actually have packets to ack.
+SNIFF_ADDR = b"\x00\xAA"
+SNIFF_LEN = 32
+_snifhex = bytearray(SNIFF_LEN * 2)
+
+
+def hexlify(b):
+    """Bytes -> lowercase hex. Written out rather than importing ubinascii so
+    the firmware keeps its single-file, no-imports-beyond-machine footprint."""
+    h = _snifhex
+    j = 0
+    for v in b:
+        h[j] = _HEXD[(v >> 4) & 0xF]
+        h[j + 1] = _HEXD[v & 0xF]
+        j += 2
+    return bytes(h[:j]).decode()
+
+
+def sniff_init():
+    CE(0)
+    write_reg(REG_EN_AA, 0x00)               # NEVER remove: 1 = the chip TRANSMITS
+    write_reg(REG_SETUP_RETR, 0x00)          # no retransmit (would TX)
+    write_reg(REG_SETUP_AW, 0x00)            # 2-byte address - officially invalid
+    _w[0] = CMD_W_REGISTER | REG_RX_ADDR_P0
+    CSN(0)
+    SPI_BUS.write(_w[:1])
+    SPI_BUS.write(SNIFF_ADDR)
+    CSN(1)
+    write_reg(REG_RX_PW_P0, SNIFF_LEN)
+    write_reg(REG_EN_RXADDR, 0x01)           # pipe 0 only
+    write_reg(REG_CONFIG, CONFIG_RX)         # CRC already disabled in CONFIG_RX
+    command(CMD_FLUSH_RX)
+    write_reg(REG_STATUS, 0x70)
+    time.sleep_ms(2)
+
+
+def sniff_pass(lo, hi, dwell_ms):
+    """Walk the range listening for packets. Returns a list of (ch, bytes)."""
+    out = []
+    buf = bytearray(SNIFF_LEN + 1)
+    for ch in range(lo, hi + 1):
+        write_reg(REG_RF_CH, ch)
+        command(CMD_FLUSH_RX)
+        CE(1)
+        time.sleep_ms(dwell_ms)              # sleep_ms yields; sleep_us would not
+        CE(0)
+        # Drain whatever landed. Three is enough - the FIFO is three deep, and
+        # looping until empty on a noisy channel would never return.
+        for _ in range(3):
+            if read_reg(REG_FIFO_STATUS) & 0x01:      # RX_EMPTY
+                break
+            buf[0] = CMD_R_RX_PAYLOAD
+            for i in range(1, SNIFF_LEN + 1):
+                buf[i] = 0xFF
+            CSN(0)
+            SPI_BUS.write_readinto(buf, buf)
+            CSN(1)
+            out.append((ch, bytes(buf[1:])))
+        write_reg(REG_STATUS, 0x70)
+    return out
 
 
 def radio_present():
@@ -376,6 +462,8 @@ class Scanner:
         # swings a band by +6 to +30 depending on whether it is in use.
         # Interleaving per frame makes the comparison genuinely simultaneous.
         self.cycle = False
+        # Sniff mode: stop measuring energy, start reading packets.
+        self.sniff = False
         self.running = True
         self.seq = 0
         self.radio_ok = False
@@ -394,6 +482,7 @@ class Scanner:
                 self.lo,
                 self.hi,
                 "cycle" if self.cycle else RATE_NAMES[self.rate],
+                "sniff" if self.sniff else "sweep",
                 "run" if self.running else "halt",
             )
         )
@@ -457,6 +546,16 @@ class Scanner:
                     self.cycle = False
                     self.rate = v
                 radio_init(self.rate)
+                self.info()
+            elif k == "M":
+                v = int(arg)
+                if v not in (0, 1):
+                    raise ValueError("mode must be 0 or 1")
+                self.sniff = bool(v)
+                if self.sniff:
+                    sniff_init()
+                else:
+                    radio_init(self.rate)
                 self.info()
             elif k == "T":
                 self.self_test()
@@ -567,6 +666,22 @@ def main():
                     led_state ^= 1
                     LED(led_state)
             time.sleep_ms(20)
+            continue
+
+        # --- sniff mode: packets, not energy ---------------------------------
+        if sc.sniff:
+            hits = sniff_pass(sc.lo, sc.hi, 2)
+            for ch, pkt in hits:
+                # Reject the all-zero and all-ff frames an idle receiver
+                # produces; they carry no information and would drown the real
+                # captures at several hundred lines a second.
+                if pkt[0] in (0x00, 0xFF) and pkt[1] == pkt[0] and pkt[2] == pkt[0]:
+                    continue
+                say("N %d %s\n" % (ch, hexlify(pkt)))
+            if LED is not None:
+                led_state ^= 1
+                LED(led_state)
+            time.sleep_ms(2)
             continue
 
         # --- one frame = `passes` accumulated sweeps -------------------------

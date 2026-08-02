@@ -38,6 +38,13 @@
  *         auth is 0=open 1=wep 2=wpa 3=wpa2 4=wpa/wpa2 5=ent 6=wpa3 7=wpa2/3.
  *         ssid is the REST OF THE LINE and may contain spaces; it is empty
  *         for a hidden network.
+ *     P <rssi> <ch> <mac> <frames> <bytes> <mgmt> <data>
+ *         PROMISCUOUS: one TRANSMITTER seen on the air, from its 802.11
+ *         header. Unlike a scan this counts real FRAMES and BYTES, so it
+ *         measures how much air a device actually uses - which a beacon scan
+ *         fundamentally cannot. mac is the transmitter address (addr2), and
+ *         its first three bytes are the manufacturer OUI.
+ *
  *     B <rssi> <addrtype> <mac> <name>
  *         one BLE advertiser. addrtype 0=public 1=random. name is the rest of
  *         the line and is empty when the advert carries none.
@@ -49,6 +56,11 @@
  *     W          run one Wi-Fi scan now
  *     B          run one BLE scan now
  *     P<ms>      seconds between full cycles, 1000..60000
+ *     M<n>       0 = scan (beacons + BLE adverts), 1 = PROMISCUOUS
+ *                Promiscuous hops channels 1..13 capturing every 802.11 frame
+ *                and tallies frames/bytes per transmitter. It is the only mode
+ *                that measures AIRTIME rather than mere presence.
+ *                Receive-only: monitor mode is passive by definition.
  *
  * WHAT THE LED MEANS (GPIO2, blue, on board #3)
  *     solid on during a scan, off between - so a board that has stopped
@@ -81,7 +93,7 @@
 #include "esp_bt_main.h"
 #include "esp_gap_ble_api.h"
 
-#define VERSION        "1.0.0"
+#define VERSION        "1.1.0"
 #define LED_GPIO       2
 #define MAX_AP         32
 #define BLE_SCAN_SECS  4
@@ -92,6 +104,15 @@ static int  s_period_ms = 6000;
 static bool s_running   = true;
 static int  s_wifi_n    = 0;
 static int  s_ble_n     = 0;
+static bool s_promisc   = false;
+
+/* Forward declarations. The promiscuous pass has to drain host commands so a
+ * five-second channel walk stays responsive, and the command handler has to be
+ * able to start and stop it - so the two refer to each other and one of them
+ * must be declared first. */
+static void drain_commands(void);
+static void prom_start(void);
+static void prom_stop(void);
 
 static void led(int on)
 {
@@ -273,6 +294,12 @@ static void drain_commands(void)
             else if (k == 'H') { s_running = false; info(); }
             else if (k == 'W') { wifi_scan(); }
             else if (k == 'B') { ble_scan(); }
+            else if (k == 'M') {
+                int v = atoi(buf + 1);
+                if (v == 1 && !s_promisc)      { s_promisc = true;  prom_start(); }
+                else if (v == 0 && s_promisc)  { s_promisc = false; prom_stop(); }
+                info();
+            }
             else if (k == 'P') {
                 int v = atoi(buf + 1);
                 if (v >= PERIOD_MIN_MS && v <= PERIOD_MAX_MS) { s_period_ms = v; info(); }
@@ -284,6 +311,146 @@ static void drain_commands(void)
             buf[len++] = (char)ch;
         }
     }
+}
+
+/* ------------------------------------------------------------ promiscuous
+ * The scan above sees BEACONS. A beacon says an access point exists; it says
+ * nothing about how much air anyone is using, because a saturating AP and an
+ * idle one both beacon about ten times a second.
+ *
+ * Monitor mode fixes exactly that. Every 802.11 frame on the tuned channel is
+ * handed to a callback, so real DATA frames get counted - and the transmitter
+ * address (addr2) identifies the device, not just the network. Its first three
+ * bytes are the manufacturer OUI, which is often enough to recognise a device
+ * that never announces a name.
+ *
+ * Still receive-only: monitor mode is passive by definition. Nothing is
+ * transmitted, and no frame is ever injected or replayed.
+ */
+#define PROM_MAX     48
+#define PROM_DWELL   400        /* ms per channel; 13 channels = ~5 s a pass */
+#define PROM_CH_LO   1
+#define PROM_CH_HI   13
+
+typedef struct {
+    uint8_t  mac[6];
+    int8_t   rssi;              /* strongest seen */
+    uint8_t  ch;
+    uint32_t frames;
+    uint32_t bytes;
+    uint16_t mgmt;
+    uint16_t data;
+} prom_t;
+
+static prom_t s_prom[PROM_MAX];
+static int    s_prom_n;
+static portMUX_TYPE s_prom_mux = portMUX_INITIALIZER_UNLOCKED;
+
+static void prom_reset(void)
+{
+    portENTER_CRITICAL(&s_prom_mux);
+    s_prom_n = 0;
+    memset(s_prom, 0, sizeof(s_prom));
+    portEXIT_CRITICAL(&s_prom_mux);
+}
+
+/* Runs in the Wi-Fi driver's context, once per frame. It must stay short and
+ * must not print: at a few thousand frames a second, a printf here would starve
+ * the driver and drop most of what we are trying to count. Tally only; report
+ * from the main loop. */
+static void IRAM_ATTR prom_cb(void *buf, wifi_promiscuous_pkt_type_t type)
+{
+    if (type != WIFI_PKT_MGMT && type != WIFI_PKT_DATA) return;
+
+    const wifi_promiscuous_pkt_t *p = (wifi_promiscuous_pkt_t *)buf;
+    if (p->rx_ctrl.sig_len < 16) return;          /* too short to hold addr2 */
+
+    /* 802.11 header: bytes 4-9 are addr1, 10-15 addr2. addr2 is the
+     * TRANSMITTER - the device actually using the air, which is the whole
+     * point of doing this rather than reading beacons. */
+    const uint8_t *a2 = p->payload + 10;
+    if (a2[0] & 0x01) return;                     /* group/broadcast - not a real device */
+
+    portENTER_CRITICAL_ISR(&s_prom_mux);
+    int slot = -1;
+    for (int i = 0; i < s_prom_n; i++) {
+        if (memcmp(s_prom[i].mac, a2, 6) == 0) { slot = i; break; }
+    }
+    if (slot < 0) {
+        if (s_prom_n >= PROM_MAX) { portEXIT_CRITICAL_ISR(&s_prom_mux); return; }
+        slot = s_prom_n++;
+        memcpy(s_prom[slot].mac, a2, 6);
+        s_prom[slot].rssi = -127;
+    }
+    prom_t *e = &s_prom[slot];
+    if (p->rx_ctrl.rssi > e->rssi) e->rssi = p->rx_ctrl.rssi;
+    e->ch = p->rx_ctrl.channel;
+    e->frames++;
+    e->bytes += p->rx_ctrl.sig_len;
+    if (type == WIFI_PKT_MGMT) e->mgmt++; else e->data++;
+    portEXIT_CRITICAL_ISR(&s_prom_mux);
+}
+
+static void prom_start(void)
+{
+    /* Scanning and monitor mode both own the radio. Stopping the scan side
+     * first avoids the two fighting over channel selection. */
+    esp_wifi_scan_stop();
+    wifi_promiscuous_filter_t f = {
+        .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA,
+    };
+    esp_wifi_set_promiscuous_filter(&f);
+    esp_wifi_set_promiscuous_rx_cb(prom_cb);
+    esp_err_t e = esp_wifi_set_promiscuous(true);
+    if (e != ESP_OK) { say("#err promiscuous: %s\n", esp_err_to_name(e)); return; }
+    prom_reset();
+    say("#info promiscuous on\n");
+}
+
+static void prom_stop(void)
+{
+    esp_wifi_set_promiscuous(false);
+    esp_wifi_set_promiscuous_rx_cb(NULL);
+    led(0);
+    say("#info promiscuous off\n");
+}
+
+/* One full pass: dwell on each channel in turn, then report the tally. */
+static void prom_pass(void)
+{
+    say("#scan promisc start\n");
+    int64_t t0 = now_ms();
+    prom_reset();
+
+    for (int ch = PROM_CH_LO; ch <= PROM_CH_HI; ch++) {
+        esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+        led(1);
+        vTaskDelay(pdMS_TO_TICKS(PROM_DWELL));
+        led(0);
+        /* Commands stay responsive during a 5-second pass. */
+        drain_commands();
+        if (!s_promisc) return;
+    }
+
+    static prom_t snap[PROM_MAX];
+    int n;
+    portENTER_CRITICAL(&s_prom_mux);
+    n = s_prom_n;
+    memcpy(snap, s_prom, sizeof(prom_t) * (n > 0 ? n : 0));
+    portEXIT_CRITICAL(&s_prom_mux);
+
+    uint32_t total = 0;
+    for (int i = 0; i < n; i++) total += snap[i].bytes;
+
+    for (int i = 0; i < n; i++) {
+        const uint8_t *m = snap[i].mac;
+        say("P %d %d %02x%02x%02x%02x%02x%02x %lu %lu %u %u\n",
+            (int)snap[i].rssi, (int)snap[i].ch,
+            m[0], m[1], m[2], m[3], m[4], m[5],
+            (unsigned long)snap[i].frames, (unsigned long)snap[i].bytes,
+            (unsigned)snap[i].mgmt, (unsigned)snap[i].data);
+    }
+    say("#scan promisc done %d %lld %lu\n", n, now_ms() - t0, (unsigned long)total);
 }
 
 void app_main(void)
@@ -343,6 +510,11 @@ void app_main(void)
         drain_commands();
         int64_t t = now_ms();
 
+        if (s_running && s_promisc) {
+            prom_pass();
+            next = now_ms() + 200;
+            continue;
+        }
         if (s_running && t >= next) {
             wifi_scan();
             vTaskDelay(pdMS_TO_TICKS(150));
