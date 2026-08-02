@@ -8,6 +8,7 @@ radio; confidence comes from whether a cluster REPLICATES across trials.
     python tools/build_report.py
 """
 
+import json
 import os
 import pathlib
 import sys
@@ -109,11 +110,33 @@ def main():
         print(f"UNCLAIMED {report.MHZ(s['lo'])}-{report.MHZ(s['hi'])} MHz at {s['level']:.0f}%"
               f"  -> {len(s['candidates'])} suspects to test")
 
+    # The second radio, if it has ever been run. Newest names_*.json wins.
+    # Optional by design: the report must still build from the nRF24 alone,
+    # which is how every capture before 2026-08-02 was taken.
+    names = None
+    capdir = pathlib.Path(os.path.expanduser("~")) / "OneDrive" / "Desktop" / "rf24-captures"
+    picks = sorted(capdir.glob("names_*.json")) if capdir.is_dir() else []
+    if picks:
+        try:
+            names = json.loads(picks[-1].read_text(encoding="utf-8"))
+            print(f"\nNamed neighbours: {picks[-1].name} - "
+                  f"{len(names.get('wifi', []))} APs, {len(names.get('ble', []))} BLE")
+            loud = [a for a in names.get("wifi", []) if a["rssi"] > -64]
+            print("   above the -64 dBm floor: "
+                  + (", ".join(f"{a['ssid'] or '(hidden)'} ch{a['ch']} {a['rssi']}dBm"
+                               for a in loud)
+                     or "NONE - so nothing that announces itself can explain "
+                        "the measured energy"))
+        except Exception as exc:                     # noqa: BLE001
+            print(f"\nCould not read {picks[-1].name}: {exc}")
+    else:
+        print("\nNo names_*.json - run tools/esp32_scan.py --save to add names.")
+
     latest = max(entries)
     html = report.build(m[latest],
                         {"when": entries[latest]["at"],
                          "sweeps": entries[latest]["sweeps"], "ms": 408},
-                        atts, suspects)
+                        atts, suspects, names)
     out = pathlib.Path(os.path.expanduser("~")) / "OneDrive" / "Desktop" / "rf24-report.html"
     out.write_text(html, encoding="utf-8")
     print(f"\nWritten: {out}  ({len(html)//1024} KB)")

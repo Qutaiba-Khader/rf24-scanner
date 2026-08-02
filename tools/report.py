@@ -257,6 +257,12 @@ font-family:ui-monospace,Consolas,monospace}
 .arcwrap .hoplab{fill:#3fbf90;font-size:11.5px;font-weight:700;text-anchor:middle;
 letter-spacing:.05em}
 .arcwrap .ziplab{fill:#e8706f;font-size:11.5px;font-weight:700;text-anchor:middle}
+.mac{display:block;font-size:10.5px;opacity:.9;
+font-family:ui-monospace,Consolas,monospace}
+.elim{margin:12px 0 0;padding:11px 13px;border-radius:9px;
+background:rgba(208,59,59,.10);border:1px solid rgba(208,59,59,.40)}
+.elim ul{margin:6px 0 6px;padding-left:20px}
+.elim li{margin:3px 0;font-size:12.5px}
 .arcwrap .zonecap{fill:#e8706f;font-size:11px;font-weight:800;text-anchor:middle;
 letter-spacing:.13em}
 .map{position:relative;margin:10px 0 4px}
@@ -460,7 +466,153 @@ def _x(c):
     return (c - MAP_LO) / MAP_SPAN * 100
 
 
-def arc_diagram(atts, suspects):
+AUTH_NAMES = ["open", "WEP", "WPA", "WPA2", "WPA/WPA2", "enterprise",
+              "WPA3", "WPA2/3"]
+
+# The nRF24's RPD threshold. An access point weaker than this cannot be the
+# source of energy the scanner is measuring, however suspicious its name looks -
+# so it is never allowed to explain a cluster.
+RPD_FLOOR_DBM = -64
+
+
+def wifi_ch_span(ch):
+    """nRF channel span of a 20 MHz Wi-Fi channel. ch 1 -> (2, 22).
+
+    Deliberately NOT called wifi_span: that name is already taken above by a
+    function with a different signature, and redefining it silently broke both
+    of its callers with a TypeError that only fires at render time.
+    """
+    c = 12 + 5 * (ch - 1)
+    return c - 10, c + 10
+
+
+def named_for(names, lo, hi):
+    """Strongest named AP that is BOTH loud enough to be seen and actually
+    covers this span. Returns None when nothing qualifies.
+
+    Both conditions matter. Overlap alone would let a -93 dBm neighbour take
+    the blame for energy the scanner physically cannot be detecting from it.
+    """
+    best = None
+    for ap in (names or {}).get("wifi", []):
+        if ap["rssi"] <= RPD_FLOOR_DBM:
+            continue
+        a, b = wifi_ch_span(ap["ch"])
+        ov = min(hi, b) - max(lo, a) + 1
+        if ov <= 0 or ov / (hi - lo + 1) < 0.5:
+            continue
+        if best is None or ap["rssi"] > best["rssi"]:
+            best = ap
+    return best
+
+
+def named_section(names, atts, suspects):
+    """The second radio's contribution: identity, and what it rules OUT.
+
+    The elimination is the point. The nRF24 says something is transmitting; this
+    says whether anything that announces itself can account for it. When nothing
+    can, the remainder is a proprietary 2.4 GHz emitter - which is the class this
+    whole project set out to find.
+    """
+    if not names or not names.get("wifi"):
+        return ""
+
+    wifi = sorted(names["wifi"], key=lambda a: (a["ch"], -a["rssi"]))
+    ble = sorted(names.get("ble", []), key=lambda b: -b["rssi"])
+    loud = [a for a in wifi if a["rssi"] > RPD_FLOOR_DBM]
+
+    rows = []
+    for a in wifi:
+        lo, hi = wifi_ch_span(a["ch"])
+        vis = a["rssi"] > RPD_FLOOR_DBM
+        rows.append(
+            f"<tr><td><b>{html.escape(a['ssid'] or '(hidden network)')}</b>"
+            f"<span class='mac'>{':'.join(a['bssid'][i:i+2] for i in range(0,12,2))}"
+            f" &middot; {AUTH_NAMES[a['auth']] if a['auth'] < len(AUTH_NAMES) else a['auth']}"
+            f"</span></td>"
+            f"<td class='mono'>Wi-Fi ch {a['ch']}</td>"
+            f"<td class='mono'>{MHZ(lo)}&ndash;{MHZ(hi)} MHz</td>"
+            f"<td class='mono num'>{a['rssi']} dBm</td>"
+            f"<td>{'<span class=who sus>loud enough to see</span>' if vis else '<span class=who ok>below the floor</span>'}</td></tr>")
+
+    for b in ble[:10]:
+        vis = b["rssi"] > RPD_FLOOR_DBM
+        rows.append(
+            f"<tr><td><b>{html.escape(b['name'] or '(unnamed BLE device)')}</b>"
+            f"<span class='mac'>{':'.join(b['mac'][i:i+2] for i in range(0,12,2))}</span></td>"
+            f"<td class='mono'>BLE</td>"
+            f"<td class='mono'>hops 2402&ndash;2480</td>"
+            f"<td class='mono num'>{b['rssi']} dBm</td>"
+            f"<td>{'<span class=who maybe>loud enough to see</span>' if vis else '<span class=who ok>below the floor</span>'}</td></tr>")
+
+    if loud:
+        verdict = (
+            f"<b>{len(loud)} of the {len(wifi)} access points are above the "
+            f"scanner&rsquo;s &minus;64 dBm floor</b>, so they can account for "
+            f"measured energy: "
+            + ", ".join(f"<b>{html.escape(a['ssid'] or '(hidden)')}</b> on ch "
+                        f"{a['ch']} at {a['rssi']} dBm"
+                        for a in sorted(loud, key=lambda x: -x["rssi"])[:4])
+            + ".")
+    else:
+        verdict = ("<b>Not one access point is above the scanner&rsquo;s "
+                   "&minus;64 dBm floor.</b> So any strong energy the scanner "
+                   "measures is <b>not</b> coming from a Wi-Fi access point. By "
+                   "elimination it is a proprietary 2.4&nbsp;GHz emitter &mdash; "
+                   "an LED controller, a dongle, an RF remote.")
+
+    # The unexplained bands. This is the whole reason for running two radios.
+    unexplained = []
+    for a in atts or []:
+        if a["verdict"] not in ("confirmed", "weak") or not a["bands"]:
+            continue
+        if "Buds" in a["name"]:
+            continue
+        b = max(a["bands"], key=lambda z: z["avg"])
+        if not named_for(names, b["lo"], b["hi"]):
+            unexplained.append((a["name"], b["lo"], b["hi"]))
+    for s in suspects or []:
+        if not named_for(names, s["lo"], s["hi"]):
+            unexplained.append(("Unidentified", s["lo"], s["hi"]))
+
+    elim = ""
+    if unexplained:
+        items = "".join(
+            f"<li><b>{MHZ(lo)}&ndash;{MHZ(hi)} MHz</b> "
+            f"<span class='mono'>(ch {lo}&ndash;{hi})</span> &mdash; "
+            f"measured as <i>{html.escape(nm)}</i></li>"
+            for nm, lo, hi in unexplained)
+        elim = (f"<div class='elim'><b>Nothing that announces itself explains "
+                f"these bands:</b><ul>{items}</ul>"
+                f"No access point loud enough to be detected covers them, so by "
+                f"elimination each is a <b>proprietary 2.4&nbsp;GHz emitter</b> "
+                f"&mdash; the class that does not appear in any Wi-Fi or "
+                f"Bluetooth scan.</div>")
+
+    lab = html.escape(names.get("label", "")) or "one capture"
+    return f"""
+<section class="card">
+  <h2>What the second radio can put a name to</h2>
+  <p class="caption" style="margin-top:0">The nRF24 measures <b>energy</b> and can
+    never say what something is. An ESP32 running <span class="mono">rfnames</span>
+    is blind to energy but reads <b>identity</b> &mdash; SSID, MAC, device name
+    &mdash; and a real signal level in dBm. Scanned {lab}.</p>
+  <table class="tab">
+    <thead><tr><th>Name</th><th>Kind</th><th>Occupies</th>
+      <th class="num">Signal</th><th>Can the scanner see it?</th></tr></thead>
+    <tbody>{''.join(rows)}</tbody>
+  </table>
+  <p class="note">{verdict}</p>
+  {elim}
+  <p class="note"><b>A Wi-Fi scan sees beacons, not traffic.</b> An access point
+    hammering the band and an idle one beacon identically, about ten times a
+    second. This table says <i>who</i> is there; only the nRF24 says <i>how much</i>
+    of the air they take. Both radios must sit in the same place for the two sets
+    of numbers to combine.</p>
+</section>"""
+
+
+def arc_diagram(atts, suspects, names=None):
     """The classic 2.4 GHz overlap picture: one half-arc per occupant.
 
     Drawn the way Wi-Fi channel charts are drawn, because that is the shape
@@ -576,7 +728,14 @@ def arc_diagram(atts, suspects):
         lo, hi = MHZ(r["lo"]), MHZ(r["hi"])
         conf = f" · {r['conf']}%" if r["conf"] is not None else " · untested"
         text = r["name"] + conf
-        half = max(len(text), 26) * CHAR_W / 2.0
+        # A name the second radio read off the air outranks one inferred from a
+        # power-cycle - but only if that access point is loud enough for this
+        # scanner to be detecting it at all. named_for() enforces both.
+        ap = named_for(names, r["lo"], r["hi"])
+        sub = f"{lo}-{hi} MHz · ch {r['lo']}-{r['hi']} · +{r['avg']:.0f}"
+        if ap:
+            sub += f" · {ap['ssid'] or '(hidden)'} @ {ap['rssi']} dBm"
+        half = max(len(text), len(sub), 26) * CHAR_W / 2.0
         lx = min(W - half - 2, max(half + 2, r["cx"]))
         want = (lx - half, lx + half)
         k = 0
@@ -593,8 +752,7 @@ def arc_diagram(atts, suspects):
         parts.append(f"<text x='{lx:.1f}' y='{ly:.0f}' class='alab' "
                      f"fill='{r['colour']}'>{html.escape(text)}</text>")
         parts.append(f"<text x='{lx:.1f}' y='{ly + 12:.0f}' class='asub' "
-                     f"fill='{r['colour']}'>{lo}-{hi} MHz &#183; "
-                     f"ch {r['lo']}-{r['hi']} &#183; +{r['avg']:.0f}</text>")
+                     f"fill='{r['colour']}'>{html.escape(sub)}</text>")
 
     parts.append(f"<line x1='0' y1='{BASE:.1f}' x2='{W:.0f}' y2='{BASE:.1f}' "
                  f"stroke='#6a6a64' stroke-width='2'/>")
@@ -830,7 +988,7 @@ def short_name(name):
     return n if len(n) <= 30 else n[:29] + "…"
 
 
-def build(mean, meta, attributions=None, suspects=None):
+def build(mean, meta, attributions=None, suspects=None, names=None):
     a = analyse(mean)
     sev, title, body = audio_verdict(a)
     # Needed by both the busiest-channels table and the spectrum rows below,
@@ -971,7 +1129,7 @@ def build(mean, meta, attributions=None, suspects=None):
 
 <section class="card">
   <h2>Where everything sits, and where they collide</h2>
-  {arc_diagram(attributions, suspects)}
+  {arc_diagram(attributions, suspects, names)}
 </section>
 
 <section class="card">
@@ -984,6 +1142,8 @@ def build(mean, meta, attributions=None, suspects=None):
   <div class="lab">{a['usable']} of {a['total']} usable &middot;
     2402&ndash;2480 MHz &middot; in-band average {a['inband']:.1f}%</div>
 </section>
+
+{named_section(names, attributions, suspects)}
 
 <section class="card">
   <h2>Which device is which</h2>
