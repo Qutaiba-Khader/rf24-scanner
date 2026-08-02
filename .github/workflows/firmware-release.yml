@@ -164,16 +164,7 @@ jobs:
       - name: Static checks
         run: |
           python -c "import ast,pathlib; ast.parse(pathlib.Path('firmware/main.py').read_text(encoding='utf-8')); print('firmware parses')"
-          python - <<'PY'
-          import ast, pathlib, sys
-          src = pathlib.Path('firmware/main.py').read_text(encoding='utf-8')
-          bad = [f'{fn.name}():{n.lineno}'
-                 for fn in ast.walk(ast.parse(src)) if isinstance(fn, ast.FunctionDef)
-                 for n in ast.walk(fn)
-                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == fn.name]
-          if bad: sys.exit('::error::infinite recursion: ' + ', '.join(bad))
-          print('no self-recursive functions')
-          PY
+          python tools/check_firmware.py firmware/main.py
           python tools/check_ids.py web/index.html
           python tools/check_selfcontained.py web/index.html
 

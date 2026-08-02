@@ -83,7 +83,7 @@ import select
 import time
 from machine import Pin, SPI
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 
 # How long to leave the CPU alone at boot before starting to scan.
 #
@@ -166,37 +166,26 @@ _counts = bytearray(NCH)
 _hexbuf = bytearray(NCH * 2)
 _HEXD = b"0123456789abcdef"
 
-# --------------------------------------------------------- non-blocking stdout
+# ------------------------------------------------------------------- output
 #
-# MicroPython's USB CDC write BLOCKS once the host stops draining the buffer.
-# A browser tab that gets busy stops reading, the TX buffer fills, and
-# sys.stdout.write() never returns: the scan loop stops dead, the LED stops
-# blinking, and the two ends deadlock each other. The board looks crashed.
+# DO NOT reintroduce select.poll() on sys.stdout here.
 #
-# So: ask whether the host is actually ready before writing, and drop the frame
-# if it is not. Dropping is the right answer here - this is live data and the
-# next sweep is milliseconds away. A backlog of stale sweeps is worth nothing.
-_wpoll = None
-try:
-    _wpoll = select.poll()
-    _wpoll.register(sys.stdout, select.POLLOUT)
-except Exception:
-    _wpoll = None             # not supported on this build; fall back to writing
-
-
-def host_writable():
-    if _wpoll is None:
-        return True
-    try:
-        return bool(_wpoll.poll(0))
-    except Exception:
-        return True
-
-
+# v1.0.3 tried to make writes non-blocking by registering sys.stdout with
+# select.poll() for POLLOUT and checking poll(0) before every write. Polling
+# sys.STDIN is the supported idiom in MicroPython; polling sys.STDOUT for
+# writability is not. register() succeeded without complaining and then poll(0)
+# HUNG - and a hang is not an exception, so the try/except around it caught
+# nothing. On hardware the board flashed its 3-second start-up pattern (which
+# makes no writes), then stopped dead on the very first say() call, taking USB
+# enumeration down with it. v1.0.1, with plain writes, enumerated fine.
+#
+# MicroPython's CDC write does still block when the host stops draining the
+# buffer, so a wedged host can stall the scan loop. That is a real trade, made
+# knowingly: the browser side no longer stalls (its log used to be O(n^2) with a
+# forced layout per line), and a blocking write that works beats a clever one
+# that hangs the board before it can even enumerate.
 def say(text):
-    """Write a line, but never block waiting for a host that is not listening."""
-    if not host_writable():
-        return False
+    """Write a line. Never raise - a failed write must not kill the scan loop."""
     try:
         sys.stdout.write(text)
         return True
@@ -291,9 +280,6 @@ def sweep_pass(counts, lo, hi, dwell):
 
 
 def emit_frame(seq, n, passes, dwell, lo, hi, ms):
-    # Check first: building the hex string is wasted work if nobody is reading.
-    if not host_writable():
-        return False
     hb = _hexbuf
     c = _counts
     j = 0

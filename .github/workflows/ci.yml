@@ -61,24 +61,12 @@ jobs:
           print('receive-only OK - no transmit paths')
           PY
 
-      # A global find-and-replace of `sys.stdout.write(` -> `say(` also rewrote
-      # the one INSIDE say(), so it called itself forever and every output call
-      # blew the stack. It shipped, because nothing here looked for it.
-      - name: No function calls itself
-        run: |
-          python - <<'PY'
-          import ast, pathlib, sys
-          src  = pathlib.Path('firmware/main.py').read_text(encoding='utf-8')
-          bad  = []
-          for fn in [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)]:
-              for node in ast.walk(fn):
-                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
-                     and node.func.id == fn.name:
-                      bad.append(f'{fn.name}() calls itself at line {node.lineno}')
-          if bad:
-              sys.exit('::error::infinite recursion: ' + '; '.join(bad))
-          print('no self-recursive functions')
-          PY
+      # Both of these reached hardware and cost a session each: say() calling
+      # itself after a careless global replace, and a call to host_writable()
+      # left behind after that function was deleted. Neither is a syntax error,
+      # and there is no interpreter here to hit them at import time.
+      - name: Firmware static checks (recursion, undefined names)
+        run: python tools/check_firmware.py firmware/main.py
 
       - name: Python tooling compiles
         run: python -m py_compile web/serve.py tools/check_ids.py tools/check_selfcontained.py
